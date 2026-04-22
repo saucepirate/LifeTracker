@@ -233,6 +233,11 @@ def init_db():
         conn.execute("ALTER TABLE goal_metrics ADD COLUMN milestone_id INTEGER REFERENCES goal_milestones(id)")
     except Exception:
         pass
+    # Migration: add target_date to goal_metrics
+    try:
+        conn.execute("ALTER TABLE goal_metrics ADD COLUMN target_date TEXT")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

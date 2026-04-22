@@ -253,7 +253,7 @@ function goalCardHTML(g) {
       return `
         <div style="margin-bottom:5px">
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
-            <span style="font-size:13px;color:var(--text-muted)">${escHtml(m.label)}</span>
+            <span style="font-size:13px;color:var(--text-muted)">${escHtml(m.label)}${m.target_date ? ` <span style="font-size:12px">· ${formatDateShort(m.target_date)}</span>` : ''}</span>
             <span style="font-size:13px;color:var(--text-secondary)">${cv}${u} / ${tv}${u}</span>
           </div>
           <div style="height:3px;background:var(--bg-hover);border-radius:2px;overflow:hidden">
@@ -545,6 +545,9 @@ function _goalDetailSectionsHTML(g) {
         <input class="form-input" type="number" id="d-g-m-start" placeholder="Start" style="font-size:13px">
         <input class="form-input" type="number" id="d-g-m-target" placeholder="Target" style="font-size:13px">
         <input class="form-input" id="d-g-m-unit" placeholder="Unit" style="font-size:13px">
+      </div>
+      <div style="margin-bottom:8px">
+        <input type="date" id="d-g-m-date" style="width:100%;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none" title="Due date (optional)">
       </div>
       ${(g.milestones || []).length ? `<div style="margin-bottom:8px">
         <select id="d-g-m-milestone" class="form-input" style="width:100%;font-size:13px">
@@ -1019,9 +1022,9 @@ function renderGMetrics(metrics, goalId, milestones) {
         <div class="goal-metric-body">
           <div class="goal-metric-label${done ? ' done' : ''}">${escHtml(m.label)}${msTagHTML}</div>
           ${tv != null
-            ? `<div class="goal-metric-values">${done ? `<span style="color:var(--text-muted)">Completed · ${tv}${u}</span>` : `${cv}${u} of ${tv}${u}${pct != null ? ` &middot; ${pct}%` : ''}`}</div>
+            ? `<div class="goal-metric-values">${done ? `<span style="color:var(--text-muted)">Completed · ${tv}${u}</span>` : `${cv}${u} of ${tv}${u}${pct != null ? ` &middot; ${pct}%` : ''}${m.target_date ? ` &middot; <span style="color:var(--text-muted)">${formatDateShort(m.target_date)}</span>` : ''}`}</div>
                <div class="goal-metric-bar"><div class="goal-metric-bar-fill${done ? ' goal-metric-bar-done' : ''}" data-bar-mid="${m.id}" style="width:${pct ?? 0}%"></div></div>`
-            : `<div class="goal-metric-values" style="color:var(--text-muted)">${done ? 'Completed' : 'No target set'}</div>`}
+            : `<div class="goal-metric-values" style="color:var(--text-muted)">${done ? 'Completed' : 'No target set'}${m.target_date ? ` &middot; ${formatDateShort(m.target_date)}` : ''}</div>`}
         </div>
         <div class="goal-metric-actions">
           ${!done ? `<button class="goal-metric-btn goal-m-edit-btn" data-mid="${m.id}">Edit</button>` : ''}
@@ -1035,14 +1038,17 @@ function renderGMetrics(metrics, goalId, milestones) {
           <input class="form-input me-target" type="number" placeholder="Target" value="${m.target_value ?? ''}" style="font-size:13px">
           <input class="form-input me-unit" placeholder="Unit" value="${escHtml(m.unit || '')}" style="font-size:13px">
         </div>
+        <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
+          <input class="form-input me-current" type="number" placeholder="Current value" value="${m.current_value ?? ''}" style="flex:1;font-size:13px">
+          <input type="date" class="me-date" value="${m.target_date || ''}" style="flex:1;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none" title="Due date (optional)">
+        </div>
         ${milestones.length ? `<div style="margin-bottom:8px">
           <select class="form-input me-milestone" style="width:100%;font-size:13px">
             <option value="">No milestone link</option>
             ${msOptions}
           </select>
         </div>` : ''}
-        <div style="display:flex;align-items:center;gap:8px">
-          <input class="form-input me-current" type="number" placeholder="Current value" value="${m.current_value ?? ''}" style="flex:1;font-size:13px">
+        <div style="display:flex;gap:8px">
           <button class="btn btn-primary btn-sm me-save" data-mid="${m.id}">Update</button>
           <button class="btn btn-secondary btn-sm me-cancel" data-mid="${m.id}">Cancel</button>
         </div>
@@ -1107,6 +1113,7 @@ function renderGMetrics(metrics, goalId, milestones) {
       const unit    = form.querySelector('.me-unit').value.trim();
       const msSel   = form.querySelector('.me-milestone');
       const msId    = msSel?.value ? parseInt(msSel.value) : null;
+      const dateVal = form.querySelector('.me-date')?.value || null;
       if (label)           payload.label         = label;
       if (!isNaN(start))   payload.start_value   = start;
       if (!isNaN(target))  payload.target_value  = target;
@@ -1114,6 +1121,8 @@ function renderGMetrics(metrics, goalId, milestones) {
       payload.unit = unit || null;
       if (msId) payload.milestone_id = msId;
       else payload.clear_milestone_id = true;
+      if (dateVal) payload.target_date = dateVal;
+      else payload.clear_target_date = true;
       try {
         const updated = await apiFetch('PUT', `/goals/${goalId}/metrics/${mid}`, payload);
         _updateGoal(updated);
@@ -1158,6 +1167,7 @@ async function doAddMetric(goalId) {
   const startEl     = document.getElementById('d-g-m-start');
   const targetEl    = document.getElementById('d-g-m-target');
   const unitEl      = document.getElementById('d-g-m-unit');
+  const dateEl      = document.getElementById('d-g-m-date');
   const milestoneEl = document.getElementById('d-g-m-milestone');
 
   const label  = labelEl?.value.trim() || 'Target';
@@ -1165,11 +1175,13 @@ async function doAddMetric(goalId) {
   const target = parseFloat(targetEl?.value);
   const unit   = unitEl?.value.trim() || null;
   const msId   = milestoneEl?.value ? parseInt(milestoneEl.value) : null;
+  const dateVal = dateEl?.value || null;
 
   const payload = { label, unit };
   if (!isNaN(start))  payload.start_value  = start;
   if (!isNaN(target)) payload.target_value = target;
   if (msId)           payload.milestone_id = msId;
+  if (dateVal)        payload.target_date  = dateVal;
 
   try {
     const updated = await apiFetch('POST', `/goals/${goalId}/metrics`, payload);
@@ -1177,6 +1189,7 @@ async function doAddMetric(goalId) {
     if (startEl)     startEl.value     = '';
     if (targetEl)    targetEl.value    = '';
     if (unitEl)      unitEl.value      = '';
+    if (dateEl)      dateEl.value      = '';
     if (milestoneEl) milestoneEl.value = '';
     _updateGoal(updated);
     renderGAll();

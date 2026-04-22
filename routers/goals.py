@@ -364,11 +364,11 @@ def add_metric(goal_id: int, body: MetricCreate):
         conn.close()
         raise HTTPException(status_code=404, detail="Goal not found.")
     conn.execute(
-        """INSERT INTO goal_metrics (goal_id, label, start_value, current_value, target_value, unit, sort_order, milestone_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO goal_metrics (goal_id, label, start_value, current_value, target_value, unit, sort_order, milestone_id, target_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (goal_id, body.label, body.start_value,
          body.current_value if body.current_value is not None else body.start_value,
-         body.target_value, body.unit, body.sort_order, body.milestone_id)
+         body.target_value, body.unit, body.sort_order, body.milestone_id, body.target_date)
     )
     _recalc_progress(goal_id, conn)
     conn.commit()
@@ -407,6 +407,10 @@ def update_metric(goal_id: int, metric_id: int, body: MetricUpdate):
         fields['milestone_id'] = None
     elif body.milestone_id is not None:
         fields['milestone_id'] = body.milestone_id
+    if body.clear_target_date:
+        fields['target_date'] = None
+    elif body.target_date is not None:
+        fields['target_date'] = body.target_date
 
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)
