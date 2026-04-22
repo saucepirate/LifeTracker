@@ -242,7 +242,7 @@ function goalCardHTML(g) {
       ${streakLabelLegacy}`);
   }
 
-  const metricsToShow = (g.metrics || []).filter(m => m.target_value != null);
+  const metricsToShow = (g.metrics || []).filter(m => m.target_value != null && !m.completed);
   if (metricsToShow.length > 0) {
     cardSections.push(metricsToShow.map(m => {
       const sv  = m.start_value ?? 0;
