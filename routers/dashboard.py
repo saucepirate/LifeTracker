@@ -76,34 +76,50 @@ def get_dashboard():
         ).fetchall()
         g['milestones'] = [dict(m) for m in milestone_rows]
 
-    # Metrics with due dates in the next 30 days
+    # All upcoming metrics with due dates (not completed)
     due_metric_rows = conn.execute(
         """SELECT gm.id, gm.label, gm.start_value, gm.current_value, gm.target_value, gm.unit,
                   gm.target_date, gm.goal_id, g.title AS goal_title
            FROM goal_metrics gm
            JOIN goals g ON g.id = gm.goal_id
            WHERE gm.target_date IS NOT NULL
-             AND gm.target_date >= ?
-             AND gm.target_date <= ?
              AND (gm.completed IS NULL OR gm.completed = 0)
              AND g.status = 'active'
            ORDER BY gm.target_date ASC""",
-        (today, in30)
     ).fetchall()
 
-    # Upcoming milestones (next 30 days, not completed)
+    # All upcoming milestones with due dates (not completed)
     due_milestone_rows = conn.execute(
         """SELECT gm.id, gm.title, gm.target_date, gm.goal_id, g.title AS goal_title
            FROM goal_milestones gm
            JOIN goals g ON g.id = gm.goal_id
            WHERE gm.target_date IS NOT NULL
-             AND gm.target_date >= ?
-             AND gm.target_date <= ?
              AND gm.completed = 0
              AND g.status = 'active'
            ORDER BY gm.target_date ASC""",
-        (today, in30)
     ).fetchall()
+
+    # Habits with this week's log entries
+    week_ago = (date.today() - timedelta(days=6)).isoformat()
+    habit_rows = conn.execute(
+        """SELECT gh.id, gh.label, gh.goal_id, gh.weekly_target_minutes, gh.min_days_per_week,
+                  g.title AS goal_title
+           FROM goal_habits gh
+           JOIN goals g ON g.id = gh.goal_id
+           WHERE g.status = 'active'
+           ORDER BY g.title, gh.sort_order""",
+    ).fetchall()
+    habits = []
+    for h in habit_rows:
+        hd = dict(h)
+        entries = conn.execute(
+            """SELECT logged_at, value FROM goal_log_entries
+               WHERE goal_id = ? AND habit_id = ? AND logged_at >= ?
+               ORDER BY logged_at DESC""",
+            (h['goal_id'], h['id'], week_ago)
+        ).fetchall()
+        hd['week_entries'] = [dict(e) for e in entries]
+        habits.append(hd)
 
     conn.close()
 
@@ -121,6 +137,7 @@ def get_dashboard():
         "goals":             goals,
         "due_metrics":       [dict(r) for r in due_metric_rows],
         "due_milestones":    [dict(r) for r in due_milestone_rows],
+        "habits":            habits,
         "events":            [dict(r) for r in event_rows],
         "notes":             [dict(r) for r in note_rows],
     }
