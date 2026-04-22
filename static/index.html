@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LifeTracker</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=27" />
+  <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t;})()</script>
+</head>
+<body>
+  <div class="app-shell">
+
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <span class="logo-mark"></span>
+        <span class="logo-text">LifeTracker</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-label">Overview</div>
+        <a class="nav-item" data-page="dashboard" href="/dashboard">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none">
+            <rect x="2" y="2" width="7" height="7" rx="1.5" fill="currentColor" opacity=".9"/>
+            <rect x="11" y="2" width="7" height="7" rx="1.5" fill="currentColor" opacity=".5"/>
+            <rect x="2" y="11" width="7" height="7" rx="1.5" fill="currentColor" opacity=".5"/>
+            <rect x="11" y="11" width="7" height="7" rx="1.5" fill="currentColor" opacity=".3"/>
+          </svg>
+          Dashboard
+        </a>
+
+        <div class="nav-section-label" style="margin-top:12px">Modules</div>
+        <a class="nav-item" data-page="tasks" href="/tasks">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none">
+            <circle cx="4.5" cy="6" r="1.5" fill="currentColor"/>
+            <rect x="8" y="5" width="9" height="2" rx="1" fill="currentColor"/>
+            <circle cx="4.5" cy="10" r="1.5" fill="currentColor" opacity=".6"/>
+            <rect x="8" y="9" width="9" height="2" rx="1" fill="currentColor" opacity=".6"/>
+            <circle cx="4.5" cy="14" r="1.5" fill="currentColor" opacity=".35"/>
+            <rect x="8" y="13" width="6" height="2" rx="1" fill="currentColor" opacity=".35"/>
+          </svg>
+          Tasks
+        </a>
+        <a class="nav-item" data-page="goals" href="/goals">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.5" opacity=".35"/>
+            <circle cx="10" cy="10" r="4.5" stroke="currentColor" stroke-width="1.5" opacity=".65"/>
+            <circle cx="10" cy="10" r="2" fill="currentColor"/>
+          </svg>
+          Goals
+        </a>
+        <a class="nav-item" data-page="notes" href="/notes">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none">
+            <rect x="3" y="2.5" width="14" height="15" rx="2" stroke="currentColor" stroke-width="1.5"/>
+            <rect x="6" y="6.5" width="8" height="1.5" rx=".75" fill="currentColor" opacity=".7"/>
+            <rect x="6" y="9.5" width="8" height="1.5" rx=".75" fill="currentColor" opacity=".5"/>
+            <rect x="6" y="12.5" width="5" height="1.5" rx=".75" fill="currentColor" opacity=".35"/>
+          </svg>
+          Notes
+        </a>
+        <a class="nav-item" data-page="media" href="/media">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none">
+            <rect x="2" y="4" width="11" height="12" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8 8l4 2-4 2V8z" fill="currentColor"/>
+            <rect x="15" y="6" width="3" height="8" rx="1" fill="currentColor" opacity=".5"/>
+          </svg>
+          Watchlist
+        </a>
+        <a class="nav-item" data-page="events" href="/events">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none">
+            <rect x="2.5" y="3.5" width="15" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/>
+            <rect x="6" y="2" width="1.5" height="3" rx=".75" fill="currentColor"/>
+            <rect x="12.5" y="2" width="1.5" height="3" rx=".75" fill="currentColor"/>
+            <rect x="2.5" y="7" width="15" height="1.5" fill="currentColor" opacity=".3"/>
+          </svg>
+          Events
+        </a>
+        <a class="nav-item" data-page="calendar" href="/calendar">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none">
+            <rect x="2.5" y="3.5" width="15" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/>
+            <rect x="6" y="2" width="1.5" height="3" rx=".75" fill="currentColor"/>
+            <rect x="12.5" y="2" width="1.5" height="3" rx=".75" fill="currentColor"/>
+            <rect x="2.5" y="7" width="15" height="1.5" fill="currentColor" opacity=".3"/>
+            <circle cx="7" cy="11.5" r="1" fill="currentColor" opacity=".6"/>
+            <circle cx="10" cy="11.5" r="1" fill="currentColor" opacity=".6"/>
+            <circle cx="13" cy="11.5" r="1" fill="currentColor" opacity=".3"/>
+            <circle cx="7" cy="14.5" r="1" fill="currentColor" opacity=".3"/>
+            <circle cx="10" cy="14.5" r="1" fill="currentColor" opacity=".3"/>
+          </svg>
+          Calendar
+        </a>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <a class="nav-item" data-page="settings" href="/settings">
+          <svg class="nav-icon" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          Settings
+        </a>
+      </div>
+    </aside>
+
+    <main id="content" class="main-content">
+      <div class="loading-state">Loading…</div>
+    </main>
+
+  </div>
+
+  <script src="/static/js/app.js?v=27"></script>
+  <script src="/static/js/dashboard.js?v=27"></script>
+  <script src="/static/js/tasks.js?v=27"></script>
+  <script src="/static/js/goals.js?v=27"></script>
+  <script src="/static/js/notes.js?v=27"></script>
+  <script src="/static/js/media.js?v=27"></script>
+  <script src="/static/js/events.js?v=27"></script>
+  <script src="/static/js/calendar.js?v=27"></script>
+  <script src="/static/js/settings.js?v=27"></script>
+</body>
+</html>
