@@ -1798,6 +1798,38 @@ input, textarea, select { font: inherit; }
   font-weight: 500;
 }
 
+.goal-ms-linked-metrics {
+  margin-top: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.goal-ms-linked-metric-item {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.goal-ms-linked-metric-label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.goal-ms-linked-metric-val {
+  margin-left: 4px;
+  color: var(--text-muted);
+}
+
+.goal-ms-metric-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 3px 0;
+  color: var(--text-primary);
+}
+
 /* ── Goal metrics ─────────────────────────────────────────── */
 .goal-metric-row {
   display: flex;

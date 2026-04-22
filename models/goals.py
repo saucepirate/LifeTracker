@@ -63,6 +63,7 @@ class MetricCreate(BaseModel):
     target_value: Optional[float] = None
     unit: Optional[str] = None
     sort_order: int = 0
+    milestone_id: Optional[int] = None
 
 
 class MetricUpdate(BaseModel):
@@ -73,6 +74,8 @@ class MetricUpdate(BaseModel):
     unit: Optional[str] = None
     sort_order: Optional[int] = None
     completed: Optional[int] = None
+    milestone_id: Optional[int] = None
+    clear_milestone_id: bool = False
 
 
 class HabitCreate(BaseModel):

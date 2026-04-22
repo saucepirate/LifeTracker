@@ -223,9 +223,14 @@ def init_db():
         conn.execute("ALTER TABLE goal_metrics ADD COLUMN completed_at TEXT")
     except Exception:
         pass
-    # Migration: add metric_id to goal_milestones
+    # Migration: add metric_id to goal_milestones (deprecated, kept for compat)
     try:
         conn.execute("ALTER TABLE goal_milestones ADD COLUMN metric_id INTEGER REFERENCES goal_metrics(id)")
+    except Exception:
+        pass
+    # Migration: add milestone_id to goal_metrics (replaces metric_id on milestones)
+    try:
+        conn.execute("ALTER TABLE goal_metrics ADD COLUMN milestone_id INTEGER REFERENCES goal_milestones(id)")
     except Exception:
         pass
     conn.commit()

@@ -490,7 +490,7 @@ function renderGDetail(g) {
     if (open) pane.querySelector('#d-g-h-label')?.focus();
   });
   pane.querySelector('#d-g-h-add')?.addEventListener('click', () => doAddHabit(g.id));
-  renderGMetrics(g.metrics || [], g.id);
+  renderGMetrics(g.metrics || [], g.id, g.milestones || []);
   pane.querySelector('#d-g-m-toggle')?.addEventListener('click', () => {
     const form = pane.querySelector('#d-g-m-add-form');
     const btn  = pane.querySelector('#d-g-m-toggle');
@@ -546,6 +546,12 @@ function _goalDetailSectionsHTML(g) {
         <input class="form-input" type="number" id="d-g-m-target" placeholder="Target" style="font-size:13px">
         <input class="form-input" id="d-g-m-unit" placeholder="Unit" style="font-size:13px">
       </div>
+      ${(g.milestones || []).length ? `<div style="margin-bottom:8px">
+        <select id="d-g-m-milestone" class="form-input" style="width:100%;font-size:13px">
+          <option value="">Link to milestone (optional)</option>
+          ${(g.milestones || []).filter(ms => !ms.completed).map(ms => `<option value="${ms.id}">${escHtml(ms.title)}</option>`).join('')}
+        </select>
+      </div>` : ''}
       <button class="btn btn-primary btn-sm" id="d-g-m-add">Add target</button>
     </div>
 
@@ -559,10 +565,6 @@ function _goalDetailSectionsHTML(g) {
       <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
         <input class="form-input" id="d-g-ms-title" placeholder="Milestone title…" style="flex:2;min-width:140px;font-size:13px">
         <input type="date" id="d-g-ms-date" style="flex:1;min-width:110px;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none">
-        ${(g.metrics || []).length ? `<select id="d-g-ms-metric" class="form-input" style="flex:1;min-width:110px;font-size:13px">
-          <option value="">No metric link</option>
-          ${(g.metrics || []).map(m => `<option value="${m.id}">${escHtml(m.label)}</option>`).join('')}
-        </select>` : ''}
       </div>
       <button class="btn btn-primary btn-sm" id="d-g-ms-add">Add milestone</button>
     </div>`;
@@ -578,22 +580,34 @@ function renderGMilestones(milestones, goalId, metrics) {
   }
 
   container.innerHTML = milestones.map(m => {
-    const linkedMetric = metrics.find(met => met.id === m.metric_id);
-    let metricTagHTML = '';
-    let metricProgressHTML = '';
-    if (linkedMetric) {
-      metricTagHTML = `<span class="goal-ms-metric-tag">${escHtml(linkedMetric.label)}</span>`;
-      const sv = linkedMetric.start_value || 0;
-      const tv = linkedMetric.target_value;
-      const cv = linkedMetric.current_value != null ? linkedMetric.current_value : sv;
-      if (tv != null && tv !== sv) {
-        const pct = Math.max(0, Math.min(100, ((cv - sv) / (tv - sv)) * 100));
-        metricProgressHTML = `<div class="progress-bar" style="height:3px;margin-top:3px"><div class="progress-fill" style="width:${Math.round(pct)}%"></div></div>`;
-      }
+    const linkedMetrics = metrics.filter(met => met.milestone_id === m.id);
+
+    let linkedMetricsHTML = '';
+    if (linkedMetrics.length) {
+      linkedMetricsHTML = `<div class="goal-ms-linked-metrics">` + linkedMetrics.map(met => {
+        const sv  = met.start_value || 0;
+        const tv  = met.target_value;
+        const cv  = met.current_value != null ? met.current_value : sv;
+        const u   = met.unit ? ` ${escHtml(met.unit)}` : '';
+        const pct = tv != null && tv !== sv
+          ? Math.max(0, Math.min(100, ((cv - sv) / (tv - sv)) * 100)) : null;
+        return `<div class="goal-ms-linked-metric-item">
+          <span class="goal-ms-linked-metric-label">${escHtml(met.label)}</span>
+          <span class="goal-ms-linked-metric-val">${cv}${u}${tv != null ? ` / ${tv}${u}` : ''}</span>
+          ${pct !== null ? `<div class="progress-bar" style="height:3px;margin-top:2px"><div class="progress-fill${met.completed ? ' goal-metric-bar-done' : ''}" style="width:${Math.round(pct)}%"></div></div>` : ''}
+        </div>`;
+      }).join('') + `</div>`;
     }
-    const metricOptions = metrics.map(met =>
-      `<option value="${met.id}"${m.metric_id === met.id ? ' selected' : ''}>${escHtml(met.label)}</option>`
-    ).join('');
+
+    const metricCheckboxes = metrics.length ? `
+      <div style="margin-top:8px">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:.05em;margin-bottom:5px">LINKED TARGETS</div>
+        ${metrics.map(met => `
+          <label class="goal-ms-metric-checkbox-row">
+            <input type="checkbox" class="ms-linked-metric-cb" data-met-id="${met.id}" ${met.milestone_id === m.id ? 'checked' : ''}>
+            <span>${escHtml(met.label)}${met.target_value != null ? `<span style="color:var(--text-muted)"> (${met.current_value ?? met.start_value ?? 0}${met.unit ? ' '+escHtml(met.unit) : ''} / ${met.target_value}${met.unit ? ' '+escHtml(met.unit) : ''})</span>` : ''}</span>
+          </label>`).join('')}
+      </div>` : '';
 
     return `
     <div class="goal-milestone-row" data-ms-id="${m.id}">
@@ -602,19 +616,15 @@ function renderGMilestones(milestones, goalId, metrics) {
         <div class="goal-ms-main">
           <span class="goal-milestone-title${m.completed ? ' done' : ''}">${escHtml(m.title)}</span>
           ${m.target_date ? `<span class="goal-milestone-date"> · ${formatDateShort(m.target_date)}</span>` : ''}
-          ${metricTagHTML}
         </div>
-        ${metricProgressHTML}
+        ${linkedMetricsHTML}
         <div class="goal-ms-edit-form" data-ms-id="${m.id}" style="display:none;margin-top:8px;padding:8px;background:var(--bg-hover);border-radius:var(--radius-el)">
           <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
-            <input class="form-input ms-edit-title" value="${escHtml(m.title)}" style="flex:2;min-width:120px;font-size:13px">
+            <input class="form-input ms-edit-title" value="${escHtml(m.title)}" style="flex:2;min-width:140px;font-size:13px">
             <input type="date" class="ms-edit-date" value="${m.target_date || ''}" style="flex:1;min-width:110px;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none">
-            ${metrics.length ? `<select class="ms-edit-metric form-input" style="flex:1;min-width:110px;font-size:13px">
-              <option value="">No metric link</option>
-              ${metricOptions}
-            </select>` : ''}
           </div>
-          <div style="display:flex;gap:6px">
+          ${metricCheckboxes}
+          <div style="display:flex;gap:6px;margin-top:8px">
             <button class="btn btn-primary btn-sm ms-edit-save" data-ms-id="${m.id}">Save</button>
             <button class="btn btn-secondary btn-sm ms-edit-cancel" data-ms-id="${m.id}">Cancel</button>
           </div>
@@ -663,16 +673,34 @@ function renderGMilestones(milestones, goalId, metrics) {
       const title = form.querySelector('.ms-edit-title').value.trim();
       if (!title) { alert('Title is required.'); return; }
       const targetDate = form.querySelector('.ms-edit-date').value || null;
-      const metricSel = form.querySelector('.ms-edit-metric');
-      const metricId = metricSel?.value ? parseInt(metricSel.value) : null;
       const payload = { title };
       if (targetDate) payload.target_date = targetDate;
       else payload.clear_target_date = true;
-      if (metricId) payload.metric_id = metricId;
-      else payload.clear_metric_id = true;
+
       try {
-        const updated = await apiFetch('PUT', `/goals/${goalId}/milestones/${msId}`, payload);
-        _updateGoal(updated);
+        // Update milestone title/date
+        const updatedGoal = await apiFetch('PUT', `/goals/${goalId}/milestones/${msId}`, payload);
+
+        // Update metric associations from checkboxes
+        const checkedIds   = [...form.querySelectorAll('.ms-linked-metric-cb:checked')].map(cb => parseInt(cb.dataset.metId));
+        const uncheckedIds = [...form.querySelectorAll('.ms-linked-metric-cb:not(:checked)')].map(cb => parseInt(cb.dataset.metId));
+        const metricUpdates = [];
+        for (const metId of checkedIds) {
+          const met = metrics.find(m => m.id === metId);
+          if (!met || met.milestone_id !== msId) {
+            metricUpdates.push(apiFetch('PUT', `/goals/${goalId}/metrics/${metId}`, { milestone_id: msId }));
+          }
+        }
+        for (const metId of uncheckedIds) {
+          const met = metrics.find(m => m.id === metId);
+          if (met && met.milestone_id === msId) {
+            metricUpdates.push(apiFetch('PUT', `/goals/${goalId}/metrics/${metId}`, { clear_milestone_id: true }));
+          }
+        }
+        if (metricUpdates.length) await Promise.all(metricUpdates);
+
+        const final = metricUpdates.length ? await apiFetch('GET', `/goals/${goalId}`) : updatedGoal;
+        _updateGoal(final);
         renderGAll();
       } catch(e) { alert('Error: ' + e.message); }
     });
@@ -958,7 +986,8 @@ function renderGLogHistory(g) {
 }
 
 // ── Metric rendering & actions ────────────────────────────────
-function renderGMetrics(metrics, goalId) {
+function renderGMetrics(metrics, goalId, milestones) {
+  milestones = milestones || [];
   const container = document.getElementById('d-g-metrics');
   if (!container) return;
   if (!metrics.length) {
@@ -974,11 +1003,18 @@ function renderGMetrics(metrics, goalId) {
     const pct  = done ? 100 : (tv != null && tv !== sv)
       ? Math.round(Math.max(0, Math.min(100, (cv - sv) / (tv - sv) * 100)))
       : null;
+    const linkedMs = milestones.find(ms => ms.id === m.milestone_id);
+    const msTagHTML = linkedMs
+      ? `<span class="goal-ms-metric-tag" style="font-size:10px;margin-left:4px;vertical-align:middle">${escHtml(linkedMs.title)}</span>`
+      : '';
+    const msOptions = milestones.map(ms =>
+      `<option value="${ms.id}"${m.milestone_id === ms.id ? ' selected' : ''}>${escHtml(ms.title)}</option>`
+    ).join('');
     return `
       <div class="goal-metric-row${done ? ' goal-metric-completed' : ''}" data-mid="${m.id}">
         <div class="checkbox-square${done ? ' checked' : ''} goal-m-complete-btn" data-mid="${m.id}" style="margin-top:3px;flex-shrink:0" title="${done ? 'Mark incomplete' : 'Mark complete'}"></div>
         <div class="goal-metric-body">
-          <div class="goal-metric-label${done ? ' done' : ''}">${escHtml(m.label)}</div>
+          <div class="goal-metric-label${done ? ' done' : ''}">${escHtml(m.label)}${msTagHTML}</div>
           ${tv != null
             ? `<div class="goal-metric-values">${done ? `<span style="color:var(--text-muted)">Completed · ${tv}${u}</span>` : `${cv}${u} of ${tv}${u}${pct != null ? ` &middot; ${pct}%` : ''}`}</div>
                <div class="goal-metric-bar"><div class="goal-metric-bar-fill${done ? ' goal-metric-bar-done' : ''}" data-bar-mid="${m.id}" style="width:${pct ?? 0}%"></div></div>`
@@ -996,6 +1032,12 @@ function renderGMetrics(metrics, goalId) {
           <input class="form-input me-target" type="number" placeholder="Target" value="${m.target_value ?? ''}" style="font-size:13px">
           <input class="form-input me-unit" placeholder="Unit" value="${escHtml(m.unit || '')}" style="font-size:13px">
         </div>
+        ${milestones.length ? `<div style="margin-bottom:8px">
+          <select class="form-input me-milestone" style="width:100%;font-size:13px">
+            <option value="">No milestone link</option>
+            ${msOptions}
+          </select>
+        </div>` : ''}
         <div style="display:flex;align-items:center;gap:8px">
           <input class="form-input me-current" type="number" placeholder="Current value" value="${m.current_value ?? ''}" style="flex:1;font-size:13px">
           <button class="btn btn-primary btn-sm me-save" data-mid="${m.id}">Update</button>
@@ -1060,11 +1102,15 @@ function renderGMetrics(metrics, goalId) {
       const target  = parseFloat(form.querySelector('.me-target').value);
       const current = parseFloat(form.querySelector('.me-current').value);
       const unit    = form.querySelector('.me-unit').value.trim();
+      const msSel   = form.querySelector('.me-milestone');
+      const msId    = msSel?.value ? parseInt(msSel.value) : null;
       if (label)           payload.label         = label;
       if (!isNaN(start))   payload.start_value   = start;
       if (!isNaN(target))  payload.target_value  = target;
       if (!isNaN(current)) payload.current_value = current;
       payload.unit = unit || null;
+      if (msId) payload.milestone_id = msId;
+      else payload.clear_milestone_id = true;
       try {
         const updated = await apiFetch('PUT', `/goals/${goalId}/metrics/${mid}`, payload);
         _updateGoal(updated);
@@ -1105,26 +1151,30 @@ function renderGMetrics(metrics, goalId) {
 }
 
 async function doAddMetric(goalId) {
-  const labelEl  = document.getElementById('d-g-m-label');
-  const startEl  = document.getElementById('d-g-m-start');
-  const targetEl = document.getElementById('d-g-m-target');
-  const unitEl   = document.getElementById('d-g-m-unit');
+  const labelEl     = document.getElementById('d-g-m-label');
+  const startEl     = document.getElementById('d-g-m-start');
+  const targetEl    = document.getElementById('d-g-m-target');
+  const unitEl      = document.getElementById('d-g-m-unit');
+  const milestoneEl = document.getElementById('d-g-m-milestone');
 
   const label  = labelEl?.value.trim() || 'Target';
   const start  = parseFloat(startEl?.value);
   const target = parseFloat(targetEl?.value);
   const unit   = unitEl?.value.trim() || null;
+  const msId   = milestoneEl?.value ? parseInt(milestoneEl.value) : null;
 
   const payload = { label, unit };
   if (!isNaN(start))  payload.start_value  = start;
   if (!isNaN(target)) payload.target_value = target;
+  if (msId)           payload.milestone_id = msId;
 
   try {
     const updated = await apiFetch('POST', `/goals/${goalId}/metrics`, payload);
-    if (labelEl)  labelEl.value  = '';
-    if (startEl)  startEl.value  = '';
-    if (targetEl) targetEl.value = '';
-    if (unitEl)   unitEl.value   = '';
+    if (labelEl)     labelEl.value     = '';
+    if (startEl)     startEl.value     = '';
+    if (targetEl)    targetEl.value    = '';
+    if (unitEl)      unitEl.value      = '';
+    if (milestoneEl) milestoneEl.value = '';
     _updateGoal(updated);
     renderGAll();
   } catch(e) { alert('Error: ' + e.message); }
@@ -1228,26 +1278,22 @@ async function logGProgress(goalId) {
 }
 
 async function doAddMilestone(goalId) {
-  const titleEl    = document.getElementById('d-g-ms-title');
-  const dateEl     = document.getElementById('d-g-ms-date');
-  const metricEl   = document.getElementById('d-g-ms-metric');
-  const title      = titleEl?.value.trim();
+  const titleEl = document.getElementById('d-g-ms-title');
+  const dateEl  = document.getElementById('d-g-ms-date');
+  const title   = titleEl?.value.trim();
   if (!title) { alert('Enter a milestone title.'); return; }
 
   const g = _goals.find(g => g.id === goalId);
   const sortOrder = g ? (g.milestones || []).length : 0;
-  const metricId  = metricEl?.value ? parseInt(metricEl.value) : null;
 
   try {
     const updated = await apiFetch('POST', `/goals/${goalId}/milestones`, {
       title,
       target_date: dateEl?.value || null,
       sort_order: sortOrder,
-      metric_id: metricId,
     });
-    if (titleEl)   titleEl.value  = '';
-    if (dateEl)    dateEl.value   = '';
-    if (metricEl)  metricEl.value = '';
+    if (titleEl) titleEl.value = '';
+    if (dateEl)  dateEl.value  = '';
     _updateGoal(updated);
     renderGAll();
   } catch(e) { alert('Error: ' + e.message); }
