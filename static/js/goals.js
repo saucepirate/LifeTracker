@@ -990,11 +990,14 @@ function renderGMetrics(metrics, goalId, milestones) {
   milestones = milestones || [];
   const container = document.getElementById('d-g-metrics');
   if (!container) return;
-  if (!metrics.length) {
-    container.innerHTML = `<div style="font-size:14px;color:var(--text-muted);padding:6px 0">No targets yet — add one below.</div>`;
+  const active = metrics.filter(m => !m.completed);
+  if (!active.length) {
+    container.innerHTML = metrics.length
+      ? `<div style="font-size:14px;color:var(--text-muted);padding:6px 0">All targets completed — see History for details.</div>`
+      : `<div style="font-size:14px;color:var(--text-muted);padding:6px 0">No targets yet — add one below.</div>`;
     return;
   }
-  container.innerHTML = metrics.map(m => {
+  container.innerHTML = active.map(m => {
     const sv   = m.start_value ?? 0;
     const cv   = m.current_value ?? sv;
     const tv   = m.target_value;
