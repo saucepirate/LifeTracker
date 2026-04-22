@@ -1309,7 +1309,7 @@ input, textarea, select { font: inherit; }
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
-  margin-top: 4px;
+  margin-bottom: 16px;
 }
 
 @media (max-width: 900px) {
