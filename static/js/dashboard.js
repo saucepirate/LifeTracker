@@ -84,6 +84,7 @@ function _renderMain(data) {
 
   _renderTasks(data.today_tasks);
   _renderGoals(data.goals);
+  _renderDueSoon(data.due_metrics || [], data.due_milestones || []);
 }
 
 function _renderTasks(tasks) {
@@ -156,11 +157,52 @@ function _renderGoals(goals) {
   }
 
   body.innerHTML = goals.slice(0, 7).map(g => {
-    const pct = Math.round(g.progress_pct || 0);
+    const pct      = Math.round(g.progress_pct || 0);
     const trackCls = g.is_on_track ? 'on-track' : 'off-track';
+    const activeMetrics = (g.metrics || []).filter(m => m.target_value != null);
+
+    const metricsHTML = activeMetrics.length ? `
+      <div class="dash-goal-metrics">
+        ${activeMetrics.map(m => {
+          const sv  = m.start_value || 0;
+          const cv  = m.current_value != null ? m.current_value : sv;
+          const tv  = m.target_value;
+          const u   = m.unit ? ` ${escHtml(m.unit)}` : '';
+          const mp  = tv !== sv ? Math.round(Math.max(0, Math.min(100, (cv - sv) / (tv - sv) * 100))) : 0;
+          const overdue = m.target_date && m.target_date < todayISO();
+          const dateLabel = m.target_date
+            ? `<span class="dash-metric-date${overdue ? ' overdue' : ''}">${formatDateShort(m.target_date)}</span>`
+            : '';
+          return `
+            <div class="dash-metric-row">
+              <div class="dash-metric-header">
+                <span class="dash-metric-label">${escHtml(m.label)}</span>
+                <span class="dash-metric-value">${cv}${u} / ${tv}${u}</span>
+                ${dateLabel}
+              </div>
+              <div class="progress-bar" style="height:4px">
+                <div class="progress-fill" style="width:${mp}%"></div>
+              </div>
+            </div>`;
+        }).join('')}
+      </div>` : '';
+
+    const pendingMilestones = (g.milestones || []).filter(m => !m.completed);
+    const doneMilestones    = (g.milestones || []).filter(m => m.completed).length;
+    const milestonesHTML = pendingMilestones.length ? `
+      <div class="dash-goal-milestones">
+        ${pendingMilestones.slice(0, 3).map(m => `
+          <div class="dash-ms-row">
+            <div class="dash-ms-dot"></div>
+            <span class="dash-ms-title">${escHtml(m.title)}</span>
+            ${m.target_date ? `<span class="dash-ms-date${m.target_date < todayISO() ? ' overdue' : ''}">${formatDateShort(m.target_date)}</span>` : ''}
+          </div>`).join('')}
+        ${pendingMilestones.length > 3 ? `<div style="font-size:12px;color:var(--text-muted);padding:2px 0 0 14px">+${pendingMilestones.length - 3} more</div>` : ''}
+      </div>` : '';
+
     return `
       <div class="dash-goal-row" data-id="${g.id}">
-        <div class="goal-on-track-dot ${trackCls}" title="${g.is_on_track ? 'On track' : 'Off track'}"></div>
+        <div class="goal-on-track-dot ${trackCls}" title="${g.is_on_track ? 'On track' : 'Off track'}" style="margin-top:3px"></div>
         <div class="dash-goal-info">
           <div class="dash-goal-name">${escHtml(g.title)}</div>
           <div class="dash-goal-progress">
@@ -170,6 +212,8 @@ function _renderGoals(goals) {
             <span class="dash-goal-pct">${pct}%</span>
           </div>
           ${g.current_streak > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${g.current_streak} day streak${g.best_streak > g.current_streak ? ` · best ${g.best_streak}` : ''}</div>` : ''}
+          ${metricsHTML}
+          ${milestonesHTML}
         </div>
       </div>`;
   }).join('');
@@ -177,6 +221,71 @@ function _renderGoals(goals) {
   body.querySelectorAll('.dash-goal-row').forEach(row => {
     row.addEventListener('click', () => loadPage('goals'));
   });
+}
+
+function _renderDueSoon(dueMetrics, dueMilestones) {
+  if (!dueMetrics.length && !dueMilestones.length) return;
+
+  const container = document.getElementById('dash-main');
+  if (!container) return;
+
+  const today = todayISO();
+
+  const metricsHTML = dueMetrics.map(m => {
+    const sv  = m.start_value || 0;
+    const cv  = m.current_value != null ? m.current_value : sv;
+    const tv  = m.target_value;
+    const u   = m.unit ? ` ${escHtml(m.unit)}` : '';
+    const pct = tv != null && tv !== sv
+      ? Math.round(Math.max(0, Math.min(100, (cv - sv) / (tv - sv) * 100))) : 0;
+    const overdue = m.target_date < today;
+    return `
+      <div class="dash-due-row" style="cursor:pointer" data-nav="goals">
+        <div class="dash-due-meta">
+          <span class="dash-due-goal">${escHtml(m.goal_title)}</span>
+          <span class="dash-due-sep">·</span>
+          <span class="dash-due-label">${escHtml(m.label)}</span>
+        </div>
+        <div class="dash-due-body">
+          <div class="progress-bar" style="flex:1;height:5px">
+            <div class="progress-fill" style="width:${pct}%"></div>
+          </div>
+          <span class="dash-due-val">${cv}${u} / ${tv}${u}</span>
+          <span class="dash-metric-date${overdue ? ' overdue' : ''}">${formatDateShort(m.target_date)}</span>
+        </div>
+      </div>`;
+  }).join('');
+
+  const milestonesHTML = dueMilestones.map(m => {
+    const overdue = m.target_date < today;
+    return `
+      <div class="dash-due-row" style="cursor:pointer" data-nav="goals">
+        <div class="dash-due-meta">
+          <span class="dash-due-goal">${escHtml(m.goal_title)}</span>
+          <span class="dash-due-sep">·</span>
+          <span class="dash-due-label">${escHtml(m.title)}</span>
+          <span style="font-size:11px;color:var(--text-muted);margin-left:4px">(milestone)</span>
+        </div>
+        <div class="dash-due-body">
+          <span class="dash-metric-date${overdue ? ' overdue' : ''}" style="margin-left:0">${formatDateShort(m.target_date)}</span>
+        </div>
+      </div>`;
+  }).join('');
+
+  const section = document.createElement('div');
+  section.className = 'dash-section dash-due-section';
+  section.innerHTML = `
+    <div class="dash-section-header">
+      <span class="dash-section-title">Targets &amp; milestones due soon</span>
+      <span class="dash-section-link" data-nav="goals">View goals →</span>
+    </div>
+    ${metricsHTML}${milestonesHTML}`;
+
+  section.querySelectorAll('[data-nav]').forEach(el => {
+    el.addEventListener('click', () => loadPage('goals'));
+  });
+
+  container.appendChild(section);
 }
 
 function _renderUpcoming(upcoming) {

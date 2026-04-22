@@ -11,7 +11,8 @@ def get_dashboard():
     business.generate_recurring_tasks()
     conn = database.get_connection()
     today = date.today().isoformat()
-    in7 = (date.today() + timedelta(days=7)).isoformat()
+    in7  = (date.today() + timedelta(days=7)).isoformat()
+    in30 = (date.today() + timedelta(days=30)).isoformat()
 
     name_row = conn.execute(
         "SELECT value FROM settings WHERE key = 'user_name'"
@@ -36,9 +37,9 @@ def get_dashboard():
     ).fetchall()
 
     goal_rows = conn.execute(
-        """SELECT id, title, goal_type, area, progress_pct, is_on_track, target_date
+        """SELECT id, title, goal_type, area, progress_pct, is_on_track, target_date, pinned
            FROM goals WHERE status = 'active'
-           ORDER BY is_on_track ASC, progress_pct DESC"""
+           ORDER BY pinned DESC, is_on_track ASC, progress_pct DESC"""
     ).fetchall()
 
     event_rows = conn.execute(
@@ -61,21 +62,65 @@ def get_dashboard():
     for g in goals:
         g['is_on_track'] = bool(g['is_on_track'])
         g['current_streak'], g['best_streak'] = business.calc_streaks(g['id'], conn)
+        metric_rows = conn.execute(
+            """SELECT id, label, start_value, current_value, target_value, unit, target_date, milestone_id
+               FROM goal_metrics WHERE goal_id = ? AND (completed IS NULL OR completed = 0)
+               ORDER BY sort_order, id""",
+            (g['id'],)
+        ).fetchall()
+        g['metrics'] = [dict(m) for m in metric_rows]
+        milestone_rows = conn.execute(
+            """SELECT id, title, target_date, completed FROM goal_milestones
+               WHERE goal_id = ? ORDER BY sort_order, id""",
+            (g['id'],)
+        ).fetchall()
+        g['milestones'] = [dict(m) for m in milestone_rows]
+
+    # Metrics with due dates in the next 30 days
+    due_metric_rows = conn.execute(
+        """SELECT gm.id, gm.label, gm.start_value, gm.current_value, gm.target_value, gm.unit,
+                  gm.target_date, gm.goal_id, g.title AS goal_title
+           FROM goal_metrics gm
+           JOIN goals g ON g.id = gm.goal_id
+           WHERE gm.target_date IS NOT NULL
+             AND gm.target_date >= ?
+             AND gm.target_date <= ?
+             AND (gm.completed IS NULL OR gm.completed = 0)
+             AND g.status = 'active'
+           ORDER BY gm.target_date ASC""",
+        (today, in30)
+    ).fetchall()
+
+    # Upcoming milestones (next 30 days, not completed)
+    due_milestone_rows = conn.execute(
+        """SELECT gm.id, gm.title, gm.target_date, gm.goal_id, g.title AS goal_title
+           FROM goal_milestones gm
+           JOIN goals g ON g.id = gm.goal_id
+           WHERE gm.target_date IS NOT NULL
+             AND gm.target_date >= ?
+             AND gm.target_date <= ?
+             AND gm.completed = 0
+             AND g.status = 'active'
+           ORDER BY gm.target_date ASC""",
+        (today, in30)
+    ).fetchall()
 
     conn.close()
 
     return {
         "user_name": user_name,
         "stats": {
-            "due_today":     len([t for t in today_tasks if t['due_date'] == today]),
-            "overdue":       len([t for t in today_tasks if t['due_date'] and t['due_date'] < today]),
-            "active_goals":  len(goals),
+            "due_today":      len([t for t in today_tasks if t['due_date'] == today]),
+            "overdue":        len([t for t in today_tasks if t['due_date'] and t['due_date'] < today]),
+            "active_goals":   len(goals),
             "goals_on_track": len([g for g in goals if g['is_on_track']]),
-            "upcoming_7d":   len(upcoming_tasks),
+            "upcoming_7d":    len(upcoming_tasks),
         },
-        "today_tasks":    today_tasks,
-        "upcoming_tasks": upcoming_tasks,
-        "goals":          goals,
-        "events":         [dict(r) for r in event_rows],
-        "notes":          [dict(r) for r in note_rows],
+        "today_tasks":       today_tasks,
+        "upcoming_tasks":    upcoming_tasks,
+        "goals":             goals,
+        "due_metrics":       [dict(r) for r in due_metric_rows],
+        "due_milestones":    [dict(r) for r in due_milestone_rows],
+        "events":            [dict(r) for r in event_rows],
+        "notes":             [dict(r) for r in note_rows],
     }
