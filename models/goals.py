@@ -29,19 +29,24 @@ class GoalUpdate(BaseModel):
     unit: Optional[str] = None
     weekly_target_minutes: Optional[int] = None
     min_days_per_week: Optional[int] = None
+    pinned: Optional[int] = None
 
 
 class MilestoneCreate(BaseModel):
     title: str
     target_date: Optional[str] = None
     sort_order: int = 0
+    metric_id: Optional[int] = None
 
 
 class MilestoneUpdate(BaseModel):
     title: Optional[str] = None
     target_date: Optional[str] = None
+    clear_target_date: bool = False
     completed: Optional[int] = None
     sort_order: Optional[int] = None
+    metric_id: Optional[int] = None
+    clear_metric_id: bool = False
 
 
 class LogEntryCreate(BaseModel):
@@ -67,6 +72,7 @@ class MetricUpdate(BaseModel):
     target_value: Optional[float] = None
     unit: Optional[str] = None
     sort_order: Optional[int] = None
+    completed: Optional[int] = None
 
 
 class HabitCreate(BaseModel):

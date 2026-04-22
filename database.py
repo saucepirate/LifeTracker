@@ -208,6 +208,26 @@ def init_db():
         conn.execute("ALTER TABLE notes ADD COLUMN goal_id INTEGER REFERENCES goals(id)")
     except Exception:
         pass
+    # Migration: add pinned to goals
+    try:
+        conn.execute("ALTER TABLE goals ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    # Migration: add completed to goal_metrics
+    try:
+        conn.execute("ALTER TABLE goal_metrics ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    # Migration: add completed_at to goal_metrics
+    try:
+        conn.execute("ALTER TABLE goal_metrics ADD COLUMN completed_at TEXT")
+    except Exception:
+        pass
+    # Migration: add metric_id to goal_milestones
+    try:
+        conn.execute("ALTER TABLE goal_milestones ADD COLUMN metric_id INTEGER REFERENCES goal_metrics(id)")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

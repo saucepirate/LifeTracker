@@ -230,10 +230,6 @@ async function _renderEditorView(note) {
         }).join('')}
       </div>
 
-      <div class="notes-goal-bar" id="n-goal-bar">
-        ${_goalBarHTML(note)}
-      </div>
-
       <div class="notes-editor-body">
         <div class="notes-quill-wrap">
           <div id="n-quill-editor"></div>
@@ -245,6 +241,11 @@ async function _renderEditorView(note) {
             ${localStorage.getItem('notes_tasks_open') === 'false' ? '›' : '‹'}
           </button>
           <div class="notes-tasks-body">
+            <div class="notes-sidebar-section">
+              <div class="notes-tasks-label" style="margin-bottom:6px">GOAL</div>
+              <div id="n-goal-bar">${_goalBarHTML(note)}</div>
+            </div>
+            <div class="divider" style="margin:8px 0"></div>
             <div class="notes-tasks-header">
               <span class="notes-tasks-label" id="n-tasks-label">${_noteTasksLabel(note.tasks || [])}</span>
               <button class="btn btn-secondary btn-sm" id="n-task-add-btn" style="padding:2px 8px;font-size:12px">+ Add</button>
@@ -452,19 +453,19 @@ function _upsertNote(updated) {
 function _goalBarHTML(note) {
   if (note.linked_goal) {
     return `
-      <span class="notes-goal-chip">
+      <div class="notes-goal-chip">
         <span class="notes-goal-chip-label">${escHtml(note.linked_goal.title)}</span>
         <button class="notes-goal-unlink" id="n-goal-unlink" title="Unlink goal">×</button>
-      </span>
-      <button class="btn btn-secondary btn-sm" id="n-goal-nav" style="font-size:12px;padding:2px 10px">Open goal →</button>`;
+      </div>
+      <button class="btn btn-secondary btn-sm" id="n-goal-nav" style="font-size:11px;padding:2px 6px;margin-top:5px;width:100%">Open goal →</button>`;
   }
   const opts = _nGoals.map(g => `<option value="${g.id}">${escHtml(g.title)}</option>`).join('');
   return `
-    <select class="form-select" id="n-goal-select" style="font-size:12px;padding:3px 8px;height:auto;max-width:260px;display:none">
+    <select class="form-select" id="n-goal-select" style="font-size:12px;padding:3px 6px;height:auto;width:100%;display:none">
       <option value="">— Choose goal —</option>
       ${opts}
     </select>
-    <button class="btn btn-secondary btn-sm" id="n-goal-link-btn" style="font-size:12px;padding:2px 10px">+ Link to goal</button>`;
+    <button class="btn btn-secondary btn-sm" id="n-goal-link-btn" style="font-size:12px;padding:2px 6px;width:100%">+ Link goal</button>`;
 }
 
 function _wireGoalBar(note) {

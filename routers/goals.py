@@ -129,7 +129,7 @@ def _goal_full(conn, goal_id):
         """SELECT t.id, t.title, t.completed_at FROM goal_task_log gtl
            JOIN tasks t ON t.id = gtl.task_id
            WHERE gtl.goal_id = ?
-           ORDER BY gtl.completed_at DESC LIMIT 5""",
+           ORDER BY gtl.completed_at DESC LIMIT 30""",
         (goal_id,)
     ).fetchall()
     g['recent_tasks'] = [dict(r) for r in recent_tasks]
@@ -228,6 +228,7 @@ def update_goal(goal_id: int, body: GoalUpdate):
     if body.unit is not None:                   fields['unit'] = body.unit
     if body.weekly_target_minutes is not None:  fields['weekly_target_minutes'] = body.weekly_target_minutes
     if body.min_days_per_week is not None:      fields['min_days_per_week'] = body.min_days_per_week
+    if body.pinned is not None:                 fields['pinned'] = body.pinned
 
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)
@@ -295,8 +296,8 @@ def add_milestone(goal_id: int, body: MilestoneCreate):
         conn.close()
         raise HTTPException(status_code=404, detail="Goal not found.")
     conn.execute(
-        "INSERT INTO goal_milestones (goal_id, title, target_date, sort_order) VALUES (?, ?, ?, ?)",
-        (goal_id, body.title, body.target_date, body.sort_order)
+        "INSERT INTO goal_milestones (goal_id, title, target_date, sort_order, metric_id) VALUES (?, ?, ?, ?, ?)",
+        (goal_id, body.title, body.target_date, body.sort_order, body.metric_id)
     )
     _recalc_progress(goal_id, conn)
     conn.commit()
@@ -316,13 +317,20 @@ def update_milestone(goal_id: int, ms_id: int, body: MilestoneUpdate):
 
     fields = {}
     if body.title is not None:       fields['title'] = body.title
-    if body.target_date is not None: fields['target_date'] = body.target_date
+    if body.clear_target_date:
+        fields['target_date'] = None
+    elif body.target_date is not None:
+        fields['target_date'] = body.target_date
     if body.sort_order is not None:  fields['sort_order'] = body.sort_order
     if body.completed is not None:
         fields['completed'] = body.completed
         fields['completed_at'] = (
             datetime.now().strftime('%Y-%m-%dT%H:%M:%S') if body.completed else None
         )
+    if body.clear_metric_id:
+        fields['metric_id'] = None
+    elif body.metric_id is not None:
+        fields['metric_id'] = body.metric_id
 
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)
@@ -385,6 +393,16 @@ def update_metric(goal_id: int, metric_id: int, body: MetricUpdate):
     if body.target_value is not None:  fields['target_value'] = body.target_value
     if body.unit is not None:          fields['unit'] = body.unit
     if body.sort_order is not None:    fields['sort_order'] = body.sort_order
+    if body.completed is not None:
+        fields['completed'] = body.completed
+        if body.completed:
+            existing = conn.execute(
+                "SELECT completed_at FROM goal_metrics WHERE id = ?", (metric_id,)
+            ).fetchone()
+            if not existing or not existing['completed_at']:
+                fields['completed_at'] = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        else:
+            fields['completed_at'] = None
 
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)

@@ -1,6 +1,7 @@
 // ── Module state ─────────────────────────────────────────────
 let _goals = [];
-let _gFilter = 'all';
+let _gTrackFilter = 'all';
+let _gAreaFilters = new Set();
 let _gSelectedId = null;
 
 const GOAL_AREAS = ['Health','Fitness','Work','Finance','Personal','Learning','Home','Social','Creative'];
@@ -24,7 +25,8 @@ function _wireAreaPills(container) {
 
 // ── Entry point ───────────────────────────────────────────────
 registerPage('goals', async function(content) {
-  _gFilter = 'all';
+  _gTrackFilter = 'all';
+  _gAreaFilters = new Set();
   _gSelectedId = null;
 
   content.innerHTML = `
@@ -35,10 +37,20 @@ registerPage('goals', async function(content) {
           <button class="btn btn-primary btn-sm" id="new-goal-btn">+ New goal</button>
         </div>
         <div id="goals-stats" class="stats-row" style="grid-template-columns:repeat(4,1fr)"></div>
-        <div class="filter-pills" id="goals-filter-pills">
-          ${['all','active','completed','habit','numeric','milestone'].map(f =>
-            `<button class="filter-pill${f === 'all' ? ' active' : ''}" data-filter="${f}">${capitalize(f)}</button>`
-          ).join('')}
+        <div class="goals-filter-bar">
+          <button class="btn btn-secondary btn-sm goals-filter-toggle" id="goals-filter-toggle">Filters</button>
+          <div id="goals-filter-panels" style="display:none">
+            <div class="filter-pills" id="goals-track-pills">
+              <button class="filter-pill active" data-track="all">All</button>
+              <button class="filter-pill" data-track="on-track">On track</button>
+              <button class="filter-pill" data-track="off-track">Off track</button>
+            </div>
+            <div class="filter-pills" id="goals-area-pills">
+              ${GOAL_AREAS.map(a =>
+                `<button class="filter-pill" data-area="${a}">${a}</button>`
+              ).join('')}
+            </div>
+          </div>
         </div>
         <div id="goals-grid" class="goals-grid"></div>
       </div>
@@ -47,13 +59,35 @@ registerPage('goals', async function(content) {
 
   document.getElementById('new-goal-btn').addEventListener('click', openNewGoalSidebar);
 
-  document.getElementById('goals-filter-pills').addEventListener('click', e => {
+  document.getElementById('goals-filter-toggle').addEventListener('click', () => {
+    const panels = document.getElementById('goals-filter-panels');
+    const open = panels.style.display === 'none';
+    panels.style.display = open ? 'flex' : 'none';
+  });
+
+  document.getElementById('goals-track-pills').addEventListener('click', e => {
     const pill = e.target.closest('.filter-pill');
     if (!pill) return;
-    _gFilter = pill.dataset.filter;
-    document.querySelectorAll('#goals-filter-pills .filter-pill').forEach(p =>
+    _gTrackFilter = pill.dataset.track;
+    document.querySelectorAll('#goals-track-pills .filter-pill').forEach(p =>
       p.classList.toggle('active', p === pill)
     );
+    _updateGFilterBtn();
+    renderGGrid();
+  });
+
+  document.getElementById('goals-area-pills').addEventListener('click', e => {
+    const pill = e.target.closest('.filter-pill');
+    if (!pill) return;
+    const area = pill.dataset.area;
+    if (_gAreaFilters.has(area)) {
+      _gAreaFilters.delete(area);
+      pill.classList.remove('active');
+    } else {
+      _gAreaFilters.add(area);
+      pill.classList.add('active');
+    }
+    _updateGFilterBtn();
     renderGGrid();
   });
 
@@ -65,6 +99,13 @@ registerPage('goals', async function(content) {
     openGDetail(gid);
   }
 });
+
+function _updateGFilterBtn() {
+  const btn = document.getElementById('goals-filter-toggle');
+  if (!btn) return;
+  const n = (_gTrackFilter !== 'all' ? 1 : 0) + _gAreaFilters.size;
+  btn.textContent = n > 0 ? `Filters (${n})` : 'Filters';
+}
 
 // ── Data loading ──────────────────────────────────────────────
 async function loadGoals() {
@@ -114,12 +155,17 @@ function renderGGrid() {
   if (!grid) return;
 
   let filtered = _goals;
-  switch (_gFilter) {
-    case 'active':    filtered = _goals.filter(g => g.status === 'active'); break;
-    case 'completed': filtered = _goals.filter(g => g.status === 'completed'); break;
-    case 'habit':     filtered = _goals.filter(g => !!(g.weekly_target_minutes || g.min_days_per_week || (g.habits || []).length > 0)); break;
-    case 'numeric':   filtered = _goals.filter(g => g.target_value != null || (g.metrics || []).length > 0); break;
-    case 'milestone': filtered = _goals.filter(g => (g.milestones || []).length > 0); break;
+
+  switch (_gTrackFilter) {
+    case 'on-track':  filtered = filtered.filter(g => g.status === 'active' && g.is_on_track); break;
+    case 'off-track': filtered = filtered.filter(g => g.status === 'active' && !g.is_on_track); break;
+  }
+
+  if (_gAreaFilters.size) {
+    filtered = filtered.filter(g => {
+      const gAreas = (g.area || '').split(',').map(a => a.trim()).filter(Boolean);
+      return [..._gAreaFilters].some(a => gAreas.includes(a));
+    });
   }
 
   if (!filtered.length) {
@@ -130,10 +176,25 @@ function renderGGrid() {
     return;
   }
 
+  filtered.sort((a, b) => (b.pinned || 0) - (a.pinned || 0));
+
   grid.innerHTML = filtered.map(goalCardHTML).join('');
 
   grid.querySelectorAll('.goal-card').forEach(card => {
     card.addEventListener('click', () => openGDetail(parseInt(card.dataset.id)));
+  });
+
+  grid.querySelectorAll('.goal-pin-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const gid = parseInt(btn.dataset.id);
+      const g = _goals.find(g => g.id === gid);
+      if (!g) return;
+      const updated = await apiFetch('PUT', `/goals/${gid}`, { pinned: g.pinned ? 0 : 1 });
+      const idx = _goals.findIndex(g => g.id === gid);
+      if (idx >= 0) _goals[idx] = updated;
+      renderGGrid();
+    });
   });
 }
 
@@ -278,6 +339,7 @@ function goalCardHTML(g) {
           <div class="goal-card-title">${escHtml(g.title)}</div>
           <div class="goal-card-badges" style="margin-top:4px">${typeBadge}${areaBadges}</div>
         </div>
+        <button class="goal-pin-btn${g.pinned ? ' pinned' : ''}" data-id="${g.id}" title="${g.pinned ? 'Unpin' : 'Pin'}">📌</button>
       </div>
       ${g.description ? `<div class="goal-card-desc">${escHtml(g.description)}</div>` : ''}
       <div class="goal-progress-wrap">
@@ -390,6 +452,8 @@ function renderGDetail(g) {
       <div class="detail-footer">
         <button class="btn btn-danger btn-sm" id="d-g-delete">Delete</button>
         <div style="display:flex;gap:8px">
+          ${g.status === 'active' && (g.metrics || []).some(m => m.target_value != null)
+            ? `<button class="btn btn-success btn-sm" id="d-g-complete">✓ Complete</button>` : ''}
           <button class="btn btn-secondary btn-sm" id="d-g-add-task">+ Task</button>
           <button class="btn btn-primary btn-sm" id="d-g-save">Save</button>
         </div>
@@ -412,8 +476,10 @@ function renderGDetail(g) {
   pane.querySelector('#d-g-delete').addEventListener('click', () => {
     if (confirm(`Delete "${g.title}"?`)) doDeleteGoal(g.id);
   });
+  pane.querySelector('#d-g-complete')?.addEventListener('click', () => doCompleteGoal(g.id));
   pane.querySelector('#d-g-add-task').addEventListener('click', () => openQuickTaskForGoal(g.id, g.title));
 
+  renderGLogHistory(g);
   renderGHabits(g.habits || [], g.id);
   pane.querySelector('#d-g-h-toggle')?.addEventListener('click', () => {
     const form = pane.querySelector('#d-g-h-add-form');
@@ -435,7 +501,7 @@ function renderGDetail(g) {
   });
   pane.querySelector('#d-g-m-add')?.addEventListener('click', () => doAddMetric(g.id));
 
-  renderGMilestones(g.milestones || [], g.id);
+  renderGMilestones(g.milestones || [], g.id, g.metrics || []);
   pane.querySelector('#d-g-ms-toggle')?.addEventListener('click', () => {
     const form = pane.querySelector('#d-g-ms-add-form');
     const btn  = pane.querySelector('#d-g-ms-toggle');
@@ -490,36 +556,125 @@ function _goalDetailSectionsHTML(g) {
     </div>
     <div class="goal-milestone-list" id="d-g-milestones"></div>
     <div id="d-g-ms-add-form" style="display:none;padding:10px;background:var(--bg-hover);border-radius:var(--radius-el);margin-top:8px">
-      <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
-        <input class="form-input" id="d-g-ms-title" placeholder="Milestone title…" style="flex:1;font-size:13px">
-        <input type="date" id="d-g-ms-date" style="width:140px;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none">
+      <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+        <input class="form-input" id="d-g-ms-title" placeholder="Milestone title…" style="flex:2;min-width:140px;font-size:13px">
+        <input type="date" id="d-g-ms-date" style="flex:1;min-width:110px;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none">
+        ${(g.metrics || []).length ? `<select id="d-g-ms-metric" class="form-input" style="flex:1;min-width:110px;font-size:13px">
+          <option value="">No metric link</option>
+          ${(g.metrics || []).map(m => `<option value="${m.id}">${escHtml(m.label)}</option>`).join('')}
+        </select>` : ''}
       </div>
       <button class="btn btn-primary btn-sm" id="d-g-ms-add">Add milestone</button>
     </div>`;
 }
 
-function renderGMilestones(milestones, goalId) {
+function renderGMilestones(milestones, goalId, metrics) {
+  metrics = metrics || [];
   const container = document.getElementById('d-g-milestones');
   if (!container) return;
   if (!milestones.length) {
     container.innerHTML = `<div style="font-size:13px;color:var(--text-muted);padding:6px 0">No milestones yet</div>`;
     return;
   }
-  container.innerHTML = milestones.map(m => `
+
+  container.innerHTML = milestones.map(m => {
+    const linkedMetric = metrics.find(met => met.id === m.metric_id);
+    let metricTagHTML = '';
+    let metricProgressHTML = '';
+    if (linkedMetric) {
+      metricTagHTML = `<span class="goal-ms-metric-tag">${escHtml(linkedMetric.label)}</span>`;
+      const sv = linkedMetric.start_value || 0;
+      const tv = linkedMetric.target_value;
+      const cv = linkedMetric.current_value != null ? linkedMetric.current_value : sv;
+      if (tv != null && tv !== sv) {
+        const pct = Math.max(0, Math.min(100, ((cv - sv) / (tv - sv)) * 100));
+        metricProgressHTML = `<div class="progress-bar" style="height:3px;margin-top:3px"><div class="progress-fill" style="width:${Math.round(pct)}%"></div></div>`;
+      }
+    }
+    const metricOptions = metrics.map(met =>
+      `<option value="${met.id}"${m.metric_id === met.id ? ' selected' : ''}>${escHtml(met.label)}</option>`
+    ).join('');
+
+    return `
     <div class="goal-milestone-row" data-ms-id="${m.id}">
-      <div class="checkbox-square${m.completed ? ' checked' : ''}" data-ms-id="${m.id}" style="flex-shrink:0"></div>
-      <div style="flex:1;min-width:0">
-        <span class="goal-milestone-title${m.completed ? ' done' : ''}">${escHtml(m.title)}</span>
-        ${m.target_date ? `<span class="goal-milestone-date"> · ${formatDateShort(m.target_date)}</span>` : ''}
+      <div class="checkbox-square${m.completed ? ' checked' : ''}" data-ms-id="${m.id}" style="flex-shrink:0;margin-top:3px"></div>
+      <div class="goal-ms-body">
+        <div class="goal-ms-main">
+          <span class="goal-milestone-title${m.completed ? ' done' : ''}">${escHtml(m.title)}</span>
+          ${m.target_date ? `<span class="goal-milestone-date"> · ${formatDateShort(m.target_date)}</span>` : ''}
+          ${metricTagHTML}
+        </div>
+        ${metricProgressHTML}
+        <div class="goal-ms-edit-form" data-ms-id="${m.id}" style="display:none;margin-top:8px;padding:8px;background:var(--bg-hover);border-radius:var(--radius-el)">
+          <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+            <input class="form-input ms-edit-title" value="${escHtml(m.title)}" style="flex:2;min-width:120px;font-size:13px">
+            <input type="date" class="ms-edit-date" value="${m.target_date || ''}" style="flex:1;min-width:110px;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none">
+            ${metrics.length ? `<select class="ms-edit-metric form-input" style="flex:1;min-width:110px;font-size:13px">
+              <option value="">No metric link</option>
+              ${metricOptions}
+            </select>` : ''}
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-primary btn-sm ms-edit-save" data-ms-id="${m.id}">Save</button>
+            <button class="btn btn-secondary btn-sm ms-edit-cancel" data-ms-id="${m.id}">Cancel</button>
+          </div>
+        </div>
       </div>
+      <button class="goal-ms-edit-btn" data-ms-id="${m.id}">Edit</button>
       <button class="goal-milestone-delete" data-ms-id="${m.id}">×</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   container.querySelectorAll('.checkbox-square').forEach(cb => {
     cb.addEventListener('click', async () => {
       const msId = parseInt(cb.dataset.msId);
       const ms = milestones.find(m => m.id === msId);
       if (ms) await doToggleMilestone(goalId, msId, ms.completed);
+    });
+  });
+
+  container.querySelectorAll('.goal-ms-edit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const msId = btn.dataset.msId;
+      const form = container.querySelector(`.goal-ms-edit-form[data-ms-id="${msId}"]`);
+      if (!form) return;
+      const isOpen = form.style.display !== 'none';
+      form.style.display = isOpen ? 'none' : 'block';
+      btn.textContent = isOpen ? 'Edit' : 'Done';
+      if (!isOpen) form.querySelector('.ms-edit-title')?.focus();
+    });
+  });
+
+  container.querySelectorAll('.ms-edit-cancel').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const msId = btn.dataset.msId;
+      const form = container.querySelector(`.goal-ms-edit-form[data-ms-id="${msId}"]`);
+      const editBtn = container.querySelector(`.goal-ms-edit-btn[data-ms-id="${msId}"]`);
+      if (form) form.style.display = 'none';
+      if (editBtn) editBtn.textContent = 'Edit';
+    });
+  });
+
+  container.querySelectorAll('.ms-edit-save').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const msId = parseInt(btn.dataset.msId);
+      const form = container.querySelector(`.goal-ms-edit-form[data-ms-id="${msId}"]`);
+      if (!form) return;
+      const title = form.querySelector('.ms-edit-title').value.trim();
+      if (!title) { alert('Title is required.'); return; }
+      const targetDate = form.querySelector('.ms-edit-date').value || null;
+      const metricSel = form.querySelector('.ms-edit-metric');
+      const metricId = metricSel?.value ? parseInt(metricSel.value) : null;
+      const payload = { title };
+      if (targetDate) payload.target_date = targetDate;
+      else payload.clear_target_date = true;
+      if (metricId) payload.metric_id = metricId;
+      else payload.clear_metric_id = true;
+      try {
+        const updated = await apiFetch('PUT', `/goals/${goalId}/milestones/${msId}`, payload);
+        _updateGoal(updated);
+        renderGAll();
+      } catch(e) { alert('Error: ' + e.message); }
     });
   });
 
@@ -703,29 +858,101 @@ function renderGHabits(habits, goalId) {
   });
 }
 
-function renderGLogHistory(logEntries, goalId) {
+function renderGLogHistory(g) {
   const container = document.getElementById('d-g-log-history');
   if (!container) return;
-  if (!logEntries.length) {
-    container.innerHTML = `<div style="font-size:13px;color:var(--text-muted);padding:6px 0">No entries yet</div>`;
+
+  const events = [];
+
+  // Habit log entries
+  for (const h of (g.habits || [])) {
+    for (const e of (h.log_entries || [])) {
+      const parts = [];
+      if (e.value != null) parts.push(`${e.value} min`);
+      if (e.note) parts.push(escHtml(e.note));
+      events.push({
+        type: 'habit', date: e.logged_at,
+        label: escHtml(h.label),
+        detail: parts.join(' · '),
+        entryId: e.id,
+      });
+    }
+  }
+
+  // General log entries (no habit_id)
+  for (const e of (g.log_entries || [])) {
+    const parts = [];
+    if (e.value != null) parts.push(String(e.value));
+    if (e.note) parts.push(escHtml(e.note));
+    events.push({
+      type: 'log', date: e.logged_at,
+      label: parts.join(' · ') || 'Note',
+      entryId: e.id,
+    });
+  }
+
+  // Milestone completions
+  for (const m of (g.milestones || [])) {
+    if (m.completed && m.completed_at) {
+      events.push({ type: 'milestone', date: m.completed_at, label: escHtml(m.title) });
+    }
+  }
+
+  // Metric completions
+  for (const m of (g.metrics || [])) {
+    if (m.completed && m.completed_at) {
+      const u = m.unit ? ` ${escHtml(m.unit)}` : '';
+      const detail = m.target_value != null ? `${m.target_value}${u}` : '';
+      events.push({ type: 'metric', date: m.completed_at, label: escHtml(m.label), detail });
+    }
+  }
+
+  // Task completions
+  for (const t of (g.recent_tasks || [])) {
+    if (t.completed_at) {
+      events.push({ type: 'task', date: t.completed_at, label: escHtml(t.title) });
+    }
+  }
+
+  events.sort((a, b) => b.date.localeCompare(a.date));
+
+  if (!events.length) {
+    container.innerHTML = `<div style="font-size:13px;color:var(--text-muted);padding:6px 0">No activity yet — log habits, complete milestones, or finish tasks to see history here.</div>`;
     return;
   }
-  container.innerHTML = logEntries.slice(0, 10).map(e => `
-    <div class="goal-log-entry" data-entry-id="${e.id}">
-      <div>
-        <span style="font-weight:500">${e.value != null ? e.value : '–'}</span>
-        ${e.note ? `<span style="color:var(--text-muted)"> · ${escHtml(e.note)}</span>` : ''}
-      </div>
-      <div style="display:flex;align-items:center;gap:4px">
-        <span style="color:var(--text-muted)">${formatDateShort(e.logged_at.slice(0, 10))}</span>
-        <button class="goal-log-delete" data-entry-id="${e.id}">×</button>
-      </div>
-    </div>`).join('');
+
+  const TYPE_META = {
+    habit:     { label: 'Habit',     cls: 'gh-type-habit'     },
+    log:       { label: 'Log',       cls: 'gh-type-log'       },
+    milestone: { label: 'Milestone', cls: 'gh-type-milestone' },
+    metric:    { label: 'Target',    cls: 'gh-type-metric'    },
+    task:      { label: 'Task',      cls: 'gh-type-task'      },
+  };
+
+  let lastDate = null;
+  const rows = [];
+  for (const ev of events.slice(0, 50)) {
+    const evDate = ev.date.slice(0, 10);
+    if (evDate !== lastDate) {
+      rows.push(`<div class="gh-date-divider">${formatDate(evDate)}</div>`);
+      lastDate = evDate;
+    }
+    const meta    = TYPE_META[ev.type] || TYPE_META.log;
+    const delBtn  = ev.entryId != null
+      ? `<button class="goal-log-delete" data-entry-id="${ev.entryId}" title="Delete">×</button>` : '';
+    rows.push(`
+      <div class="gh-event-row">
+        <span class="gh-type-badge ${meta.cls}">${meta.label}</span>
+        <span class="gh-event-label">${ev.label}${ev.detail ? `<span class="gh-event-detail"> · ${ev.detail}</span>` : ''}</span>
+        ${delBtn}
+      </div>`);
+  }
+
+  container.innerHTML = rows.join('');
 
   container.querySelectorAll('.goal-log-delete').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const entryId = parseInt(btn.dataset.entryId);
-      await doDeleteLogEntry(goalId, entryId);
+      await doDeleteLogEntry(g.id, parseInt(btn.dataset.entryId));
     });
   });
 }
@@ -739,24 +966,26 @@ function renderGMetrics(metrics, goalId) {
     return;
   }
   container.innerHTML = metrics.map(m => {
-    const sv  = m.start_value ?? 0;
-    const cv  = m.current_value ?? sv;
-    const tv  = m.target_value;
-    const u   = m.unit ? ` ${escHtml(m.unit)}` : '';
-    const pct = (tv != null && tv !== sv)
+    const sv   = m.start_value ?? 0;
+    const cv   = m.current_value ?? sv;
+    const tv   = m.target_value;
+    const u    = m.unit ? ` ${escHtml(m.unit)}` : '';
+    const done = !!m.completed;
+    const pct  = done ? 100 : (tv != null && tv !== sv)
       ? Math.round(Math.max(0, Math.min(100, (cv - sv) / (tv - sv) * 100)))
       : null;
     return `
-      <div class="goal-metric-row" data-mid="${m.id}">
+      <div class="goal-metric-row${done ? ' goal-metric-completed' : ''}" data-mid="${m.id}">
+        <div class="checkbox-square${done ? ' checked' : ''} goal-m-complete-btn" data-mid="${m.id}" style="margin-top:3px;flex-shrink:0" title="${done ? 'Mark incomplete' : 'Mark complete'}"></div>
         <div class="goal-metric-body">
-          <div class="goal-metric-label">${escHtml(m.label)}</div>
+          <div class="goal-metric-label${done ? ' done' : ''}">${escHtml(m.label)}</div>
           ${tv != null
-            ? `<div class="goal-metric-values">${cv}${u} of ${tv}${u}${pct != null ? ` &middot; ${pct}%` : ''}</div>
-               <div class="goal-metric-bar"><div class="goal-metric-bar-fill" data-bar-mid="${m.id}" style="width:${pct ?? 0}%"></div></div>`
-            : `<div class="goal-metric-values" style="color:var(--text-muted)">No target set</div>`}
+            ? `<div class="goal-metric-values">${done ? `<span style="color:var(--text-muted)">Completed · ${tv}${u}</span>` : `${cv}${u} of ${tv}${u}${pct != null ? ` &middot; ${pct}%` : ''}`}</div>
+               <div class="goal-metric-bar"><div class="goal-metric-bar-fill${done ? ' goal-metric-bar-done' : ''}" data-bar-mid="${m.id}" style="width:${pct ?? 0}%"></div></div>`
+            : `<div class="goal-metric-values" style="color:var(--text-muted)">${done ? 'Completed' : 'No target set'}</div>`}
         </div>
         <div class="goal-metric-actions">
-          <button class="goal-metric-btn goal-m-edit-btn" data-mid="${m.id}">Edit</button>
+          ${!done ? `<button class="goal-metric-btn goal-m-edit-btn" data-mid="${m.id}">Edit</button>` : ''}
           <button class="goal-metric-del goal-m-del-btn" data-mid="${m.id}" title="Delete">×</button>
         </div>
       </div>
@@ -853,6 +1082,26 @@ function renderGMetrics(metrics, goalId) {
       if (confirm('Delete this target?')) await doDeleteMetric(goalId, mid);
     });
   });
+
+  container.querySelectorAll('.goal-m-complete-btn').forEach(cb => {
+    cb.addEventListener('click', async () => {
+      const mid = parseInt(cb.dataset.mid);
+      const g   = _goals.find(g => g.id === goalId);
+      const m   = (g?.metrics || []).find(m => m.id === mid);
+      if (!m) return;
+      const completing = !m.completed;
+      const payload = { completed: completing ? 1 : 0 };
+      if (completing && m.target_value != null) payload.current_value = m.target_value;
+      try {
+        const updated = await apiFetch('PUT', `/goals/${goalId}/metrics/${mid}`, payload);
+        _updateGoal(updated);
+        renderGStats();
+        renderGGrid();
+        const pane = document.getElementById('goals-detail-pane');
+        if (pane?.classList.contains('open')) renderGDetail(updated);
+      } catch(e) { alert('Error: ' + e.message); }
+    });
+  });
 }
 
 async function doAddMetric(goalId) {
@@ -937,6 +1186,24 @@ async function saveGDetail(goalId) {
   } catch(e) { alert('Save failed: ' + e.message); }
 }
 
+async function doCompleteGoal(goalId) {
+  const g = _goals.find(g => g.id === goalId);
+  if (!g) return;
+  if (!confirm(`Mark "${g.title}" as completed?\n\nThis will set all numeric targets to 100% and close the goal.`)) return;
+
+  try {
+    const metricsWithTarget = (g.metrics || []).filter(m => m.target_value != null);
+    await Promise.all(
+      metricsWithTarget.map(m =>
+        apiFetch('PUT', `/goals/${goalId}/metrics/${m.id}`, { completed: 1, current_value: m.target_value })
+      )
+    );
+    const updated = await apiFetch('PUT', `/goals/${goalId}`, { status: 'completed' });
+    _updateGoal(updated);
+    renderGAll();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
 async function logGProgress(goalId) {
   const valueEl = document.getElementById('d-g-log-value');
   const noteEl  = document.getElementById('d-g-log-note');
@@ -961,22 +1228,26 @@ async function logGProgress(goalId) {
 }
 
 async function doAddMilestone(goalId) {
-  const titleEl = document.getElementById('d-g-ms-title');
-  const dateEl  = document.getElementById('d-g-ms-date');
-  const title   = titleEl?.value.trim();
+  const titleEl    = document.getElementById('d-g-ms-title');
+  const dateEl     = document.getElementById('d-g-ms-date');
+  const metricEl   = document.getElementById('d-g-ms-metric');
+  const title      = titleEl?.value.trim();
   if (!title) { alert('Enter a milestone title.'); return; }
 
   const g = _goals.find(g => g.id === goalId);
   const sortOrder = g ? (g.milestones || []).length : 0;
+  const metricId  = metricEl?.value ? parseInt(metricEl.value) : null;
 
   try {
     const updated = await apiFetch('POST', `/goals/${goalId}/milestones`, {
       title,
       target_date: dateEl?.value || null,
       sort_order: sortOrder,
+      metric_id: metricId,
     });
-    if (titleEl) titleEl.value = '';
-    if (dateEl)  dateEl.value  = '';
+    if (titleEl)   titleEl.value  = '';
+    if (dateEl)    dateEl.value   = '';
+    if (metricEl)  metricEl.value = '';
     _updateGoal(updated);
     renderGAll();
   } catch(e) { alert('Error: ' + e.message); }
