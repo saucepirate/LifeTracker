@@ -630,6 +630,11 @@ input, textarea, select { font: inherit; }
   box-shadow: 0 1px 3px rgba(0,0,0,0.12);
   border: none;
 }
+/* Tag pills keep their own color when active — just add the shadow */
+.tf-group .tag-filter-pill.active {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  font-weight: 500;
+}
 [data-theme="dark"] .tf-group { background: rgba(255,255,255,0.07); }
 [data-theme="dark"] .tf-group .tf-pill:hover { background: rgba(255,255,255,0.08); }
 [data-theme="dark"] .tf-group .tf-pill.active { background: rgba(255,255,255,0.12); box-shadow: none; }
@@ -679,15 +684,17 @@ input, textarea, select { font: inherit; }
 
 .tf-goal-select {
   font-size: 12px;
-  padding: 3px 8px;
-  border: var(--border-subtle);
+  padding: 4px 10px;
+  border: none;
   border-radius: var(--radius-pill);
-  background: var(--bg-card);
+  background: var(--bg-input);
   color: var(--text-secondary);
   cursor: pointer;
   outline: none;
+  height: 28px;
 }
-.tf-goal-select:focus { border-color: var(--color-accent); }
+.tf-goal-select:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 30%, transparent); }
+[data-theme="dark"] .tf-goal-select { background: rgba(255,255,255,0.07); }
 
 /* ── Section headers (task groups, etc.) ─────────────────── */
 .section-header {

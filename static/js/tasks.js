@@ -138,8 +138,9 @@ function renderSecondaryFilters() {
       ${_tGoals.map(g => `<option value="${g.id}"${_activeGoalId === g.id ? ' selected' : ''}>${escHtml(g.title)}</option>`).join('')}
     </select>` : '';
 
+  const tagGroup   = _tags.length   ? `<div class="tf-group">${tagPills}</div>` : '';
   const tagSection = (_tags.length || _tGoals.length) ? `
-    <div class="tf-sep"></div>${tagPills}${goalSelect}` : '';
+    <div class="tf-sep"></div>${tagGroup}${goalSelect}` : '';
 
   container.innerHTML = `
     <div class="task-filter-bar">
