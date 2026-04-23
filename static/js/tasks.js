@@ -45,28 +45,13 @@ registerPage('tasks', async function(content) {
           </div>
         </div>
         <div id="tasks-stats" class="stats-row" style="grid-template-columns:repeat(4,1fr)"></div>
-        <div class="filter-pills" id="tasks-filter-pills">
-          ${['all','today','upcoming','recurring','completed'].map(f =>
-            `<button class="filter-pill${f==='all'?' active':''}" data-filter="${f}">${capitalize(f)}</button>`
-          ).join('')}
-        </div>
-        <div id="tasks-secondary-filters"></div>
+        <div id="tasks-filter-bar"></div>
         <div class="task-lists-row" id="task-lists-row"></div>
       </div>
       <div class="tasks-detail-pane" id="tasks-detail-pane"></div>
     </div>`;
 
   document.getElementById('new-task-btn').addEventListener('click', openNewTaskModal);
-
-  document.getElementById('tasks-filter-pills').addEventListener('click', e => {
-    const pill = e.target.closest('.filter-pill');
-    if (!pill) return;
-    _filter = pill.dataset.filter;
-    document.querySelectorAll('#tasks-filter-pills .filter-pill').forEach(p =>
-      p.classList.toggle('active', p === pill)
-    );
-    renderAllLists();
-  });
 
   document.getElementById('tasks-sort').addEventListener('change', e => {
     _sort = e.target.value;
@@ -133,8 +118,12 @@ function renderStats() {
 }
 
 function renderSecondaryFilters() {
-  const container = document.getElementById('tasks-secondary-filters');
+  const container = document.getElementById('tasks-filter-bar');
   if (!container) return;
+
+  const statusPills = ['all','today','upcoming','recurring','completed'].map(f =>
+    `<button class="tf-pill tf-status${_filter === f ? ' active' : ''}" data-filter="${f}">${capitalize(f)}</button>`
+  ).join('');
 
   const tagPills = _tags.map(tg => {
     const active = _activeTagIds.has(tg.id);
@@ -144,22 +133,32 @@ function renderSecondaryFilters() {
   }).join('');
 
   const goalSelect = _tGoals.length ? `
-    <div class="tf-sep"></div>
     <select id="goal-filter-select" class="tf-goal-select">
       <option value="">All goals</option>
       ${_tGoals.map(g => `<option value="${g.id}"${_activeGoalId === g.id ? ' selected' : ''}>${escHtml(g.title)}</option>`).join('')}
     </select>` : '';
 
+  const tagSection = (_tags.length || _tGoals.length) ? `
+    <div class="tf-sep"></div>${tagPills}${goalSelect}` : '';
+
   container.innerHTML = `
     <div class="task-filter-bar">
-      ${tagPills}
-      ${goalSelect}
+      <div class="tf-group">${statusPills}</div>
+      ${tagSection}
       <div class="tf-sep"></div>
       <span class="tf-label">Include</span>
-      <button class="tf-pill goal-type-pill${_showTargets   ? ' active tf-active--cyan'   : ''}" data-type="targets">Targets</button>
+      <button class="tf-pill goal-type-pill${_showTargets    ? ' active tf-active--cyan'   : ''}" data-type="targets">Targets</button>
       <button class="tf-pill goal-type-pill${_showMilestones ? ' active tf-active--purple' : ''}" data-type="milestones">Milestones</button>
-      <button class="tf-pill goal-type-pill${_showHabits    ? ' active tf-active--green'  : ''}" data-type="habits">Habits</button>
+      <button class="tf-pill goal-type-pill${_showHabits     ? ' active tf-active--green'  : ''}" data-type="habits">Habits</button>
     </div>`;
+
+  container.querySelectorAll('.tf-status').forEach(pill => {
+    pill.addEventListener('click', () => {
+      _filter = pill.dataset.filter;
+      renderSecondaryFilters();
+      renderAllLists();
+    });
+  });
 
   container.querySelectorAll('.tag-filter-pill').forEach(pill => {
     pill.addEventListener('click', () => {

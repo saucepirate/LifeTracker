@@ -551,8 +551,8 @@ input, textarea, select { font: inherit; }
   flex-wrap: wrap;
 }
 
-#tasks-filter-pills {
-  margin-bottom: 8px;
+#tasks-filter-bar {
+  margin-bottom: 0;
 }
 
 .goals-filter-bar {
@@ -604,6 +604,35 @@ input, textarea, select { font: inherit; }
   border-top: var(--border-subtle);
   border-bottom: var(--border-subtle);
 }
+
+/* Status pills wrapped in a segmented control */
+.tf-group {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-input);
+  border-radius: var(--radius-pill);
+  padding: 2px;
+  flex-shrink: 0;
+}
+.tf-group .tf-pill {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.tf-group .tf-pill:hover {
+  background: rgba(0,0,0,0.05);
+}
+.tf-group .tf-pill.active {
+  background: var(--bg-card);
+  color: var(--color-accent);
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  border: none;
+}
+[data-theme="dark"] .tf-group { background: rgba(255,255,255,0.07); }
+[data-theme="dark"] .tf-group .tf-pill:hover { background: rgba(255,255,255,0.08); }
+[data-theme="dark"] .tf-group .tf-pill.active { background: rgba(255,255,255,0.12); box-shadow: none; }
 
 .tf-sep {
   width: 1px;
