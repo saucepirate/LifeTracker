@@ -144,10 +144,10 @@ function renderGStats() {
   });
 
   document.getElementById('goals-stats').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Active goals</div><div class="stat-value">${active}</div></div>
-    <div class="stat-card"><div class="stat-label">On track</div><div class="stat-value">${onTrack}</div></div>
-    <div class="stat-card"><div class="stat-label">Milestones due soon</div><div class="stat-value">${upcoming}</div></div>
-    <div class="stat-card"><div class="stat-label">Overdue milestones</div><div class="stat-value${overdueMsCount > 0 ? ' danger' : ''}">${overdueMsCount}</div></div>`;
+    <div class="stat-card stat-card--blue"><div class="stat-label">Active goals</div><div class="stat-value">${active}</div></div>
+    <div class="stat-card stat-card--green"><div class="stat-label">On track</div><div class="stat-value">${onTrack}</div></div>
+    <div class="stat-card stat-card--amber"><div class="stat-label">Milestones due soon</div><div class="stat-value">${upcoming}</div></div>
+    <div class="stat-card stat-card--red"><div class="stat-label">Overdue milestones</div><div class="stat-value${overdueMsCount > 0 ? ' danger' : ''}">${overdueMsCount}</div></div>`;
 }
 
 function renderGGrid() {

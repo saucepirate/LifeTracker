@@ -42,19 +42,19 @@ function _renderStats(stats) {
   const el = document.getElementById('dash-stats');
   if (!el) return;
   el.innerHTML = `
-    <div class="stat-card">
+    <div class="stat-card stat-card--cyan">
       <div class="stat-label">Due today</div>
       <div class="stat-value">${stats.due_today}</div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card stat-card--red">
       <div class="stat-label">Overdue</div>
       <div class="stat-value${stats.overdue > 0 ? ' danger' : ''}">${stats.overdue}</div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card stat-card--green">
       <div class="stat-label">Goals on track</div>
       <div class="stat-value">${stats.goals_on_track}<span style="font-size:14px;font-weight:400;color:var(--text-muted)"> / ${stats.active_goals}</span></div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card stat-card--purple">
       <div class="stat-label">Upcoming (7 days)</div>
       <div class="stat-value">${stats.upcoming_7d}</div>
     </div>`;

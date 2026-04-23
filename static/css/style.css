@@ -197,6 +197,16 @@ input, textarea, select { font: inherit; }
   box-shadow: var(--shadow-card);
 }
 
+/* ── Neon accent palette ─────────────────────────────────── */
+:root {
+  --neon-cyan:   #00E5FF;
+  --neon-green:  #00FF88;
+  --neon-red:    #FF2D55;
+  --neon-purple: #BF5FFF;
+  --neon-amber:  #FFB800;
+  --neon-blue:   #4D9FFF;
+}
+
 /* ── Stats row ───────────────────────────────────────────── */
 .stats-row {
   display: grid;
@@ -208,10 +218,18 @@ input, textarea, select { font: inherit; }
 .stat-card {
   background: var(--bg-card);
   border: var(--border-subtle);
+  border-top: 3px solid transparent;
   border-radius: var(--radius-card);
   padding: 14px 16px;
   box-shadow: var(--shadow-card);
 }
+
+.stat-card--cyan   { border-top-color: var(--neon-cyan);   box-shadow: var(--shadow-card), 0 -1px 12px rgba(0,229,255,.18); }
+.stat-card--green  { border-top-color: var(--neon-green);  box-shadow: var(--shadow-card), 0 -1px 12px rgba(0,255,136,.18); }
+.stat-card--red    { border-top-color: var(--neon-red);    box-shadow: var(--shadow-card), 0 -1px 12px rgba(255,45,85,.18); }
+.stat-card--purple { border-top-color: var(--neon-purple); box-shadow: var(--shadow-card), 0 -1px 12px rgba(191,95,255,.18); }
+.stat-card--amber  { border-top-color: var(--neon-amber);  box-shadow: var(--shadow-card), 0 -1px 12px rgba(255,184,0,.18); }
+.stat-card--blue   { border-top-color: var(--neon-blue);   box-shadow: var(--shadow-card), 0 -1px 12px rgba(77,159,255,.18); }
 
 .stat-label {
   font-size: 13px;

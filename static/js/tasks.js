@@ -116,10 +116,10 @@ function renderStats() {
   const recurring = _tasks.filter(t => t.is_recurring && t.status === 'pending').length;
 
   document.getElementById('tasks-stats').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Due today</div><div class="stat-value">${dueToday}</div></div>
-    <div class="stat-card"><div class="stat-label">Overdue</div><div class="stat-value${overdue > 0 ? ' danger' : ''}">${overdue}</div></div>
-    <div class="stat-card"><div class="stat-label">Completed this week</div><div class="stat-value">${doneWeek}</div></div>
-    <div class="stat-card"><div class="stat-label">Recurring active</div><div class="stat-value">${recurring}</div></div>`;
+    <div class="stat-card stat-card--cyan"><div class="stat-label">Due today</div><div class="stat-value">${dueToday}</div></div>
+    <div class="stat-card stat-card--red"><div class="stat-label">Overdue</div><div class="stat-value${overdue > 0 ? ' danger' : ''}">${overdue}</div></div>
+    <div class="stat-card stat-card--green"><div class="stat-label">Completed this week</div><div class="stat-value">${doneWeek}</div></div>
+    <div class="stat-card stat-card--purple"><div class="stat-label">Recurring active</div><div class="stat-value">${recurring}</div></div>`;
 }
 
 function renderSecondaryFilters() {
