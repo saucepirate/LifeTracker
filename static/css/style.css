@@ -847,8 +847,24 @@ input, textarea, select { font: inherit; }
   text-overflow: ellipsis;
 }
 
+.task-list-col-add {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.task-list-col-add:hover { background: var(--bg-hover); color: var(--color-accent); }
+
 .task-list-col-close {
-  margin-left: auto;
   width: 20px;
   height: 20px;
   border: none;

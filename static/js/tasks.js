@@ -225,11 +225,17 @@ function buildListColumn(config, isMaster) {
     if (goal) filterBadge = `<span class="tag-badge tag-amber" style="font-size:12px">${escHtml(goal.title)}</span>`;
   }
 
+  const addBtn = (!isMaster && config.type === 'goal')
+    ? `<button class="task-list-col-add" title="New task for this goal" data-goal-id="${config.filter_id}">+</button>`
+    : '';
   col.innerHTML = `
     <div class="task-list-col-header">
       <span class="task-list-col-name">${escHtml(config.name)}</span>
       ${filterBadge}
-      ${!isMaster ? `<button class="task-list-col-close" title="Remove list">×</button>` : ''}
+      <div style="display:flex;gap:4px;margin-left:auto">
+        ${addBtn}
+        ${!isMaster ? `<button class="task-list-col-close" title="Remove list">×</button>` : ''}
+      </div>
     </div>
     <div class="task-list-col-body"></div>`;
 
@@ -237,6 +243,9 @@ function buildListColumn(config, isMaster) {
     col.querySelector('.task-list-col-close').addEventListener('click', () => {
       removeListConfig(config.id);
       renderAllLists();
+    });
+    col.querySelector('.task-list-col-add')?.addEventListener('click', () => {
+      openNewTaskModal(config.filter_id || null);
     });
   }
 
@@ -288,11 +297,25 @@ function renderColumnTasks(config, bodyEl) {
   if (config.type === 'master') {
     bodyEl.innerHTML = groupedTasksHTML(tasks, isWideMaster);
   } else if (!tasks.length) {
-    bodyEl.innerHTML = `<div class="empty-state" style="padding:28px 12px;text-align:center">
-      <div class="empty-state-text">No tasks</div></div>`;
+    if (config.type === 'goal') {
+      const goalTitle = (_tGoals.find(g => g.id === config.filter_id) || {}).title || 'this goal';
+      bodyEl.innerHTML = `
+        <div class="empty-state" style="padding:20px 12px;text-align:center">
+          <div class="empty-state-text" style="margin-bottom:6px">No tasks linked to<br>"${escHtml(goalTitle)}"</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Open a task's detail pane and set its Linked goal to add it here.</div>
+          <button class="btn btn-secondary btn-sm col-new-task-btn" data-goal-id="${config.filter_id}" style="font-size:12px">+ New task for this goal</button>
+        </div>`;
+    } else {
+      bodyEl.innerHTML = `<div class="empty-state" style="padding:28px 12px;text-align:center">
+        <div class="empty-state-text">No tasks</div></div>`;
+    }
   } else {
     bodyEl.innerHTML = tasks.map(t => taskRowHTML(t, false)).join('');
   }
+
+  bodyEl.querySelectorAll('.col-new-task-btn').forEach(btn => {
+    btn.addEventListener('click', () => openNewTaskModal(parseInt(btn.dataset.goalId) || null));
+  });
 
   bodyEl.querySelectorAll('.task-row').forEach(row => {
     row.addEventListener('click', e => {
@@ -870,11 +893,13 @@ async function saveDetail(taskId, silent = false) {
   const tag_ids  = Array.from(document.querySelectorAll('#detail-tags input[type=checkbox]'))
     .filter(c => c.checked).map(c => parseInt(c.dataset.tagId));
 
-  const body = { tag_ids, notes, goal_id };
+  const body = { tag_ids, notes };
   if (title)    body.title    = title;
   if (priority) body.priority = priority;
   if (due_date) body.due_date = due_date;
   else          body.clear_due_date = true;
+  if (goal_id)  body.goal_id  = goal_id;
+  else          body.clear_goal_id = true;
 
   try {
     const updated = await apiFetch('PUT', `/tasks/${taskId}`, body);
@@ -919,14 +944,14 @@ async function refreshSelectedTask() {
 }
 
 // ── New task modal ────────────────────────────────────────────
-function openNewTaskModal() {
+function openNewTaskModal(prefilledGoalId = null) {
   const tagOpts = _tags.map(tg =>
     `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
       <input type="checkbox" name="tag" value="${tg.id}"> ${escHtml(tg.name)}
     </label>`).join('');
 
   const goalOpts = _tGoals.map(g =>
-    `<option value="${g.id}">${escHtml(g.title)}</option>`).join('');
+    `<option value="${g.id}"${g.id === prefilledGoalId ? ' selected' : ''}>${escHtml(g.title)}</option>`).join('');
 
   const body = `
     <div class="form-group">

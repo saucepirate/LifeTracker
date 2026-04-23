@@ -26,6 +26,7 @@ class TaskUpdate(BaseModel):
     goal_id: Optional[int] = None
     tag_ids: Optional[List[int]] = None
     clear_due_date: bool = False
+    clear_goal_id: bool = False
 
 
 class SubtaskCreate(BaseModel):

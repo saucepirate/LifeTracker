@@ -206,7 +206,10 @@ def update_task(task_id: int, body: TaskUpdate):
     if body.notes is not None:    fields['notes'] = body.notes
     if body.status is not None:   fields['status'] = body.status
     if body.priority is not None: fields['priority'] = body.priority
-    if body.goal_id is not None:  fields['goal_id'] = body.goal_id
+    if body.clear_goal_id:
+        fields['goal_id'] = None
+    elif body.goal_id is not None:
+        fields['goal_id'] = body.goal_id
     if body.clear_due_date:
         fields['due_date'] = None
     elif body.due_date is not None:
