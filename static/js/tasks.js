@@ -296,19 +296,37 @@ function renderColumnTasks(config, bodyEl) {
 
   if (config.type === 'master') {
     bodyEl.innerHTML = groupedTasksHTML(tasks, isWideMaster);
-  } else if (!tasks.length) {
-    if (config.type === 'goal') {
-      const goalTitle = (_tGoals.find(g => g.id === config.filter_id) || {}).title || 'this goal';
+  } else if (config.type === 'goal') {
+    const gid            = config.filter_id;
+    const goalMetrics    = (_goalItems.metrics    || []).filter(m => m.goal_id === gid);
+    const goalMilestones = (_goalItems.milestones || []).filter(m => m.goal_id === gid);
+    const goalHabits     = (_goalItems.habits     || []).filter(h => h.goal_id === gid);
+    const hasAnything    = tasks.length || goalMetrics.length || goalMilestones.length || goalHabits.length;
+
+    if (!hasAnything) {
+      const goalTitle = (_tGoals.find(g => g.id === gid) || {}).title || 'this goal';
       bodyEl.innerHTML = `
         <div class="empty-state" style="padding:20px 12px;text-align:center">
-          <div class="empty-state-text" style="margin-bottom:6px">No tasks linked to<br>"${escHtml(goalTitle)}"</div>
+          <div class="empty-state-text" style="margin-bottom:6px">No items linked to<br>"${escHtml(goalTitle)}"</div>
           <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Open a task's detail pane and set its Linked goal to add it here.</div>
-          <button class="btn btn-secondary btn-sm col-new-task-btn" data-goal-id="${config.filter_id}" style="font-size:12px">+ New task for this goal</button>
+          <button class="btn btn-secondary btn-sm col-new-task-btn" data-goal-id="${gid}" style="font-size:12px">+ New task for this goal</button>
         </div>`;
     } else {
-      bodyEl.innerHTML = `<div class="empty-state" style="padding:28px 12px;text-align:center">
-        <div class="empty-state-text">No tasks</div></div>`;
+      let html = tasks.map(t => taskRowHTML(t, false)).join('');
+      if (goalMilestones.length)
+        html += `<div class="section-header" style="font-size:11px;padding:8px 4px 4px">Milestones</div>` +
+                goalMilestones.map(m => milestoneRowHTML(m)).join('');
+      if (goalMetrics.length)
+        html += `<div class="section-header" style="font-size:11px;padding:8px 4px 4px">Targets</div>` +
+                goalMetrics.map(m => metricRowHTML(m)).join('');
+      if (goalHabits.length)
+        html += `<div class="section-header" style="font-size:11px;padding:8px 4px 4px">Habits</div>` +
+                goalHabits.map(h => habitRowHTML(h)).join('');
+      bodyEl.innerHTML = html;
     }
+  } else if (!tasks.length) {
+    bodyEl.innerHTML = `<div class="empty-state" style="padding:28px 12px;text-align:center">
+      <div class="empty-state-text">No tasks</div></div>`;
   } else {
     bodyEl.innerHTML = tasks.map(t => taskRowHTML(t, false)).join('');
   }
@@ -339,8 +357,8 @@ function renderColumnTasks(config, bodyEl) {
     });
   });
 
-  // Goal item events (master only)
-  if (config.type === 'master') {
+  // Goal item events (master + goal columns)
+  if (config.type === 'master' || config.type === 'goal') {
     bodyEl.querySelectorAll('.milestone-row .goal-item-check .checkbox-circle').forEach(cb => {
       cb.addEventListener('click', async e => {
         e.stopPropagation();
