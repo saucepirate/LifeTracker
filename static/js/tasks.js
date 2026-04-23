@@ -192,23 +192,28 @@ function renderSecondaryFilters() {
 }
 
 // ── Multi-list board ──────────────────────────────────────────
+const MAX_LISTS = 4;
+
 function renderAllLists() {
   const row = document.getElementById('task-lists-row');
   if (!row) return;
   row.innerHTML = '';
-  const newWideMode = loadListConfigs().length === 0;
+  const configs = loadListConfigs();
+  const newWideMode = configs.length === 0;
   if (newWideMode !== _wideMode) _expandedTaskId = null;
   _wideMode = newWideMode;
 
   row.appendChild(buildListColumn({ id: 'master', name: 'All tasks', type: 'master' }, true));
 
-  loadListConfigs().forEach(config => row.appendChild(buildListColumn(config, false)));
+  configs.forEach(config => row.appendChild(buildListColumn(config, false)));
 
-  const addCol = document.createElement('div');
-  addCol.className = 'add-list-col';
-  addCol.innerHTML = `<button class="add-list-col-btn">+ Add list</button>`;
-  addCol.querySelector('button').addEventListener('click', openAddListModal);
-  row.appendChild(addCol);
+  if (configs.length < MAX_LISTS) {
+    const addCol = document.createElement('div');
+    addCol.className = 'add-list-col';
+    addCol.innerHTML = `<button class="add-list-col-btn">+ Add list</button>`;
+    addCol.querySelector('button').addEventListener('click', openAddListModal);
+    row.appendChild(addCol);
+  }
 }
 
 function buildListColumn(config, isMaster) {
@@ -312,16 +317,21 @@ function renderColumnTasks(config, bodyEl) {
           <button class="btn btn-secondary btn-sm col-new-task-btn" data-goal-id="${gid}" style="font-size:12px">+ New task for this goal</button>
         </div>`;
     } else {
-      let html = tasks.map(t => taskRowHTML(t, false)).join('');
-      if (goalMilestones.length)
-        html += `<div class="section-header" style="font-size:11px;padding:8px 4px 4px">Milestones</div>` +
-                goalMilestones.map(m => milestoneRowHTML(m)).join('');
-      if (goalMetrics.length)
-        html += `<div class="section-header" style="font-size:11px;padding:8px 4px 4px">Targets</div>` +
-                goalMetrics.map(m => metricRowHTML(m)).join('');
+      let html = '';
       if (goalHabits.length)
         html += `<div class="section-header" style="font-size:11px;padding:8px 4px 4px">Habits</div>` +
                 goalHabits.map(h => habitRowHTML(h)).join('');
+      html += tasks.map(t => taskRowHTML(t, false)).join('');
+      const dateItems = [
+        ...goalMilestones.map(m => ({ ...m, _kind: 'milestone' })),
+        ...goalMetrics.map(m => ({ ...m, _kind: 'metric' })),
+      ].sort((a, b) => {
+        if (!a.target_date && !b.target_date) return 0;
+        if (!a.target_date) return 1;
+        if (!b.target_date) return -1;
+        return a.target_date.localeCompare(b.target_date);
+      });
+      html += dateItems.map(item => item._kind === 'milestone' ? milestoneRowHTML(item) : metricRowHTML(item)).join('');
       bodyEl.innerHTML = html;
     }
   } else if (!tasks.length) {
@@ -461,18 +471,7 @@ function groupedTasksHTML(tasks, isWide = false) {
     },
   ];
 
-  let html = groups
-    .filter(g => g.tasks.length || g.metrics.length || g.milestones.length)
-    .map(g => {
-      const total = g.tasks.length + g.metrics.length + g.milestones.length;
-      return `
-        <div class="task-group">
-          <div class="section-header">${g.label} <span style="opacity:.5;font-weight:400">(${total})</span></div>
-          ${g.tasks.map(t => taskRowHTML(t, isWide)).join('')}
-          ${g.milestones.map(m => milestoneRowHTML(m)).join('')}
-          ${g.metrics.map(m => metricRowHTML(m)).join('')}
-        </div>`;
-    }).join('');
+  let html = '';
 
   if (habits.length) {
     html += `
@@ -481,6 +480,27 @@ function groupedTasksHTML(tasks, isWide = false) {
         ${habits.map(h => habitRowHTML(h)).join('')}
       </div>`;
   }
+
+  html += groups
+    .filter(g => g.tasks.length || g.metrics.length || g.milestones.length)
+    .map(g => {
+      const combined = [
+        ...g.milestones.map(m => ({ ...m, _kind: 'milestone' })),
+        ...g.metrics.map(m => ({ ...m, _kind: 'metric' })),
+      ].sort((a, b) => {
+        if (!a.target_date && !b.target_date) return 0;
+        if (!a.target_date) return 1;
+        if (!b.target_date) return -1;
+        return a.target_date.localeCompare(b.target_date);
+      });
+      const total = g.tasks.length + combined.length;
+      return `
+        <div class="task-group">
+          <div class="section-header">${g.label} <span style="opacity:.5;font-weight:400">(${total})</span></div>
+          ${g.tasks.map(t => taskRowHTML(t, isWide)).join('')}
+          ${combined.map(item => item._kind === 'milestone' ? milestoneRowHTML(item) : metricRowHTML(item)).join('')}
+        </div>`;
+    }).join('');
 
   return html || `<div class="empty-state" style="padding:28px 12px;text-align:center"><div class="empty-state-text">No tasks</div></div>`;
 }
@@ -1061,6 +1081,8 @@ function openNewTaskModal(prefilledGoalId = null) {
 
 // ── Add list modal ────────────────────────────────────────────
 function openAddListModal() {
+  if (loadListConfigs().length >= MAX_LISTS) return;
+
   const tagOpts  = _tags.map(tg => `<option value="tag-${tg.id}">${escHtml(tg.name)}</option>`).join('');
   const goalOpts = _tGoals.map(g  => `<option value="goal-${g.id}">${escHtml(g.title)}</option>`).join('');
 

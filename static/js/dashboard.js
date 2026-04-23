@@ -44,7 +44,7 @@ function _renderStats(stats) {
   el.innerHTML = `
     <div class="stat-card stat-card--cyan">
       <div class="stat-label">Due today</div>
-      <div class="stat-value">${stats.due_today}</div>
+      <div class="stat-value"><span id="dash-stat-today-remaining">${stats.due_today}</span><span style="font-size:14px;font-weight:400;color:var(--text-muted)"> / ${stats.due_today_total}</span></div>
     </div>
     <div class="stat-card stat-card--red">
       <div class="stat-label">Overdue</div>
@@ -54,7 +54,7 @@ function _renderStats(stats) {
       <div class="stat-label">Goals on track</div>
       <div class="stat-value">${stats.goals_on_track}<span style="font-size:14px;font-weight:400;color:var(--text-muted)"> / ${stats.active_goals}</span></div>
     </div>
-    <div class="stat-card stat-card--purple">
+    <div class="stat-card stat-card--blue">
       <div class="stat-label">Upcoming (7 days)</div>
       <div class="stat-value">${stats.upcoming_7d}</div>
     </div>`;
@@ -132,7 +132,7 @@ function _renderTasks(tasks) {
         row.style.cssText = 'opacity:0;transition:opacity 0.25s';
         setTimeout(() => {
           row.remove();
-          const sv = document.querySelector('#dash-stats .stat-card:first-child .stat-value');
+          const sv = document.getElementById('dash-stat-today-remaining');
           if (sv) sv.textContent = Math.max(0, parseInt(sv.textContent) - 1);
         }, 260);
       } catch(err) { /* silent */ }

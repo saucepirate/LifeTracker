@@ -27,10 +27,14 @@ def calc_streaks(goal_id, conn):
     return current, max(best, current)
 
 
-def generate_recurring_tasks():
+def generate_recurring_tasks(until=None):
     conn = database.get_connection()
     today = date.today()
-    end = today + timedelta(days=7)
+    if until:
+        end = date.fromisoformat(str(until)) if not isinstance(until, date) else until
+        end = max(end, today + timedelta(days=7))
+    else:
+        end = today + timedelta(days=7)
 
     recurrences = conn.execute(
         "SELECT * FROM task_recurrences WHERE active = 1"

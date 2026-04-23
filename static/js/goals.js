@@ -399,27 +399,45 @@ function renderGDetail(g) {
           ${g.current_streak > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">🔥 ${g.current_streak} day streak${g.best_streak > g.current_streak ? ` · best ${g.best_streak}` : ''}</div>` : ''}
         </div>
 
-        <div class="detail-grid">
-          <div class="detail-field">
-            <div class="detail-field-label">Status</div>
-            <select id="d-g-status">
-              <option value="active"${g.status === 'active' ? ' selected' : ''}>Active</option>
-              <option value="completed"${g.status === 'completed' ? ' selected' : ''}>Completed</option>
-              <option value="abandoned"${g.status === 'abandoned' ? ' selected' : ''}>Abandoned</option>
-            </select>
+        <button class="goal-info-toggle" id="d-g-info-toggle">
+          <span>General information</span>
+          <svg id="d-g-info-chevron" viewBox="0 0 16 16" width="14" height="14" fill="none" style="flex-shrink:0;transition:transform 0.18s">
+            <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div id="d-g-info-body" style="display:none">
+          <div class="detail-grid" style="margin-top:10px">
+            <div class="detail-field">
+              <div class="detail-field-label">Status</div>
+              <select id="d-g-status">
+                <option value="active"${g.status === 'active' ? ' selected' : ''}>Active</option>
+                <option value="completed"${g.status === 'completed' ? ' selected' : ''}>Completed</option>
+                <option value="abandoned"${g.status === 'abandoned' ? ' selected' : ''}>Abandoned</option>
+              </select>
+            </div>
+            <div class="detail-field">
+              <div class="detail-field-label">Target date</div>
+              <input type="date" id="d-g-target-date" value="${g.target_date || ''}">
+            </div>
+            <div class="detail-field" style="grid-column:1/-1">
+              <div class="detail-field-label">Area</div>
+              ${_areaPickerHTML(g.area)}
+            </div>
           </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Target date</div>
-            <input type="date" id="d-g-target-date" value="${g.target_date || ''}">
-          </div>
-          <div class="detail-field" style="grid-column:1/-1">
-            <div class="detail-field-label">Area</div>
-            ${_areaPickerHTML(g.area)}
-          </div>
-        </div>
 
-        <div class="detail-section-title">Description</div>
-        <textarea class="detail-notes" id="d-g-description" placeholder="Describe your goal…" style="margin-bottom:14px">${escHtml(g.description || '')}</textarea>
+          <div class="detail-section-title" style="margin-top:14px">Description</div>
+          <textarea class="detail-notes" id="d-g-description" placeholder="Describe your goal…" style="margin-bottom:14px">${escHtml(g.description || '')}</textarea>
+
+          ${(g.notes || []).length ? `
+            <div class="detail-section-title">Linked notes</div>
+            <div id="d-g-linked-notes" style="margin-bottom:14px">
+              ${g.notes.map(n => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:var(--border-subtle)">
+                  <span style="font-size:13px;color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(n.title)}</span>
+                  <button class="btn btn-secondary btn-sm" data-note-id="${n.id}" style="padding:2px 8px;font-size:12px;flex-shrink:0;margin-left:8px">Open →</button>
+                </div>`).join('')}
+            </div>` : ''}
+        </div>
 
         ${_goalDetailSectionsHTML(g)}
 
@@ -437,17 +455,6 @@ function renderGDetail(g) {
                 <span style="color:var(--text-muted);float:right">${t.completed_at ? formatDateShort(t.completed_at.slice(0,10)) : ''}</span>
               </div>`).join('')}
           </div>` : ''}
-
-        ${(g.notes || []).length ? `
-          <div class="divider"></div>
-          <div class="detail-section-title">Linked notes</div>
-          <div id="d-g-linked-notes">
-            ${g.notes.map(n => `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:var(--border-subtle)">
-                <span style="font-size:13px;color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(n.title)}</span>
-                <button class="btn btn-secondary btn-sm" data-note-id="${n.id}" style="padding:2px 8px;font-size:12px;flex-shrink:0;margin-left:8px">Open →</button>
-              </div>`).join('')}
-          </div>` : ''}
       </div>
       <div class="detail-footer">
         <button class="btn btn-danger btn-sm" id="d-g-delete">Delete</button>
@@ -461,6 +468,14 @@ function renderGDetail(g) {
     </div>`;
 
   _wireAreaPills(pane);
+
+  pane.querySelector('#d-g-info-toggle').addEventListener('click', () => {
+    const body    = pane.querySelector('#d-g-info-body');
+    const chevron = pane.querySelector('#d-g-info-chevron');
+    const open    = body.style.display !== 'none';
+    body.style.display    = open ? 'none' : 'block';
+    chevron.style.transform = open ? '' : 'rotate(180deg)';
+  });
 
   pane.querySelectorAll('#d-g-linked-notes [data-note-id]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -577,12 +592,13 @@ function renderGMilestones(milestones, goalId, metrics) {
   metrics = metrics || [];
   const container = document.getElementById('d-g-milestones');
   if (!container) return;
-  if (!milestones.length) {
+  const active = milestones.filter(m => !m.completed);
+  if (!active.length) {
     container.innerHTML = `<div style="font-size:13px;color:var(--text-muted);padding:6px 0">No milestones yet</div>`;
     return;
   }
 
-  container.innerHTML = milestones.map(m => {
+  container.innerHTML = active.map(m => {
     const linkedMetrics = metrics.filter(met => met.milestone_id === m.id);
 
     let linkedMetricsHTML = '';

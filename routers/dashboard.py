@@ -42,13 +42,6 @@ def get_dashboard():
            ORDER BY pinned DESC, is_on_track ASC, progress_pct DESC"""
     ).fetchall()
 
-    event_rows = conn.execute(
-        """SELECT id, title, date, start_time, all_day
-           FROM events WHERE date >= ? AND date <= ?
-           ORDER BY date ASC, start_time ASC""",
-        (today, in7)
-    ).fetchall()
-
     note_rows = conn.execute(
         "SELECT id, title, updated_at FROM notes ORDER BY updated_at DESC LIMIT 4"
     ).fetchall()
@@ -121,16 +114,23 @@ def get_dashboard():
         hd['week_entries'] = [dict(e) for e in entries]
         habits.append(hd)
 
+    due_today_pending = len([t for t in today_tasks if t['due_date'] == today])
+    completed_today = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE due_date = ? AND status = 'completed' AND date(completed_at) = ?",
+        (today, today)
+    ).fetchone()[0]
+
     conn.close()
 
     return {
         "user_name": user_name,
         "stats": {
-            "due_today":      len([t for t in today_tasks if t['due_date'] == today]),
-            "overdue":        len([t for t in today_tasks if t['due_date'] and t['due_date'] < today]),
-            "active_goals":   len(goals),
-            "goals_on_track": len([g for g in goals if g['is_on_track']]),
-            "upcoming_7d":    len(upcoming_tasks),
+            "due_today":       due_today_pending,
+            "due_today_total": due_today_pending + completed_today,
+            "overdue":         len([t for t in today_tasks if t['due_date'] and t['due_date'] < today]),
+            "active_goals":    len(goals),
+            "goals_on_track":  len([g for g in goals if g['is_on_track']]),
+            "upcoming_7d":     len(upcoming_tasks),
         },
         "today_tasks":       today_tasks,
         "upcoming_tasks":    upcoming_tasks,
@@ -138,6 +138,5 @@ def get_dashboard():
         "due_metrics":       [dict(r) for r in due_metric_rows],
         "due_milestones":    [dict(r) for r in due_milestone_rows],
         "habits":            habits,
-        "events":            [dict(r) for r in event_rows],
         "notes":             [dict(r) for r in note_rows],
     }
