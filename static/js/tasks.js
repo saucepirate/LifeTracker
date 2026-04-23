@@ -2,6 +2,7 @@
 let _tasks = [];
 let _tags = [];
 let _tGoals = [];
+let _goalItems = { metrics: [], milestones: [], habits: [] };
 let _filter = 'all';
 let _sort = 'due_date';
 let _selectedId = null;
@@ -9,6 +10,9 @@ let _activeTagIds = new Set();
 let _activeGoalId = null;
 let _wideMode = true;
 let _expandedTaskId = null;
+let _showTargets = false;
+let _showMilestones = false;
+let _showHabits = false;
 
 const LISTS_KEY = 'lt_task_lists';
 
@@ -20,6 +24,10 @@ registerPage('tasks', async function(content) {
   _selectedId = null;
   _expandedTaskId = null;
   _wideMode = true;
+  _showTargets = false;
+  _showMilestones = false;
+  _showHabits = false;
+  _goalItems = { metrics: [], milestones: [], habits: [] };
 
   content.innerHTML = `
     <div class="tasks-shell">
@@ -80,14 +88,16 @@ function removeListConfig(id) { saveListConfigs(loadListConfigs().filter(c => c.
 // ── Data loading ──────────────────────────────────────────────
 async function loadAll() {
   try { await apiFetch('POST', '/recurrences/generate'); } catch(e) { /* non-fatal */ }
-  const [tr, gr, rr] = await Promise.all([
+  const [tr, gr, rr, gi] = await Promise.all([
     apiFetch('GET', '/tasks'),
     apiFetch('GET', '/goals'),
     apiFetch('GET', '/tags'),
+    apiFetch('GET', '/goals/items').catch(() => ({ metrics: [], milestones: [], habits: [] })),
   ]);
   _tasks = tr.items;
   _tGoals = gr.items;
   _tags  = rr.items;
+  _goalItems = gi;
 }
 
 // ── Render orchestration ──────────────────────────────────────
@@ -128,7 +138,7 @@ function renderSecondaryFilters() {
   const hasGoals = _tGoals.length > 0;
 
   container.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
       <span style="font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap">Tags:</span>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         ${_tags.map(tg => {
@@ -142,6 +152,14 @@ function renderSecondaryFilters() {
         <option value="">All goals</option>
         ${_tGoals.map(g => `<option value="${g.id}"${_activeGoalId === g.id ? ' selected' : ''}>${escHtml(g.title)}</option>`).join('')}
       </select>` : ''}
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <span style="font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap">Show:</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="filter-pill goal-type-pill${_showTargets ? ' active' : ''}" data-type="targets">Targets</button>
+        <button class="filter-pill goal-type-pill${_showMilestones ? ' active' : ''}" data-type="milestones">Milestones</button>
+        <button class="filter-pill goal-type-pill${_showHabits ? ' active' : ''}" data-type="habits">Habits</button>
+      </div>
     </div>`;
 
   container.querySelectorAll('.tag-filter-pill').forEach(pill => {
@@ -161,6 +179,17 @@ function renderSecondaryFilters() {
       renderAllLists();
     });
   }
+
+  container.querySelectorAll('.goal-type-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const type = pill.dataset.type;
+      if (type === 'targets')    _showTargets   = !_showTargets;
+      else if (type === 'milestones') _showMilestones = !_showMilestones;
+      else if (type === 'habits')     _showHabits     = !_showHabits;
+      renderSecondaryFilters();
+      renderAllLists();
+    });
+  });
 }
 
 // ── Multi-list board ──────────────────────────────────────────
@@ -257,11 +286,11 @@ function renderColumnTasks(config, bodyEl) {
   const tasks = getTasksForConfig(config);
   const isWideMaster = config.type === 'master' && _wideMode;
 
-  if (!tasks.length) {
+  if (config.type === 'master') {
+    bodyEl.innerHTML = groupedTasksHTML(tasks, isWideMaster);
+  } else if (!tasks.length) {
     bodyEl.innerHTML = `<div class="empty-state" style="padding:28px 12px;text-align:center">
       <div class="empty-state-text">No tasks</div></div>`;
-  } else if (config.type === 'master') {
-    bodyEl.innerHTML = groupedTasksHTML(tasks, isWideMaster);
   } else {
     bodyEl.innerHTML = tasks.map(t => taskRowHTML(t, false)).join('');
   }
@@ -280,11 +309,40 @@ function renderColumnTasks(config, bodyEl) {
   bodyEl.querySelectorAll('.checkbox-circle').forEach(cb => {
     cb.addEventListener('click', e => {
       e.stopPropagation();
-      const taskId = parseInt(cb.closest('.task-row').dataset.id);
+      const taskRow = cb.closest('.task-row');
+      if (!taskRow) return;
+      const taskId = parseInt(taskRow.dataset.id);
       const task = _tasks.find(t => t.id === taskId);
       if (task && task.status === 'pending') doCompleteTask(taskId);
     });
   });
+
+  // Goal item events (master only)
+  if (config.type === 'master') {
+    bodyEl.querySelectorAll('.milestone-row .goal-item-check .checkbox-circle').forEach(cb => {
+      cb.addEventListener('click', async e => {
+        e.stopPropagation();
+        const row = cb.closest('.milestone-row');
+        const msId  = parseInt(row.dataset.msId);
+        const goalId = parseInt(row.dataset.goalId);
+        try {
+          await apiFetch('PUT', `/goals/${goalId}/milestones/${msId}`, { completed: 1 });
+          row.style.cssText = 'opacity:0;transition:opacity 0.25s';
+          setTimeout(() => {
+            row.remove();
+            _goalItems.milestones = _goalItems.milestones.filter(m => m.id !== msId);
+          }, 260);
+        } catch(err) { /* silent */ }
+      });
+    });
+
+    bodyEl.querySelectorAll('.metric-row, .habit-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const goalId = parseInt(row.dataset.goalId);
+        if (goalId) { window._openGoalId = goalId; loadPage('goals'); }
+      });
+    });
+  }
 
   // Restore expanded state after re-render
   if (isWideMaster && _expandedTaskId) {
@@ -305,18 +363,86 @@ function renderColumnTasks(config, bodyEl) {
 
 function groupedTasksHTML(tasks, isWide = false) {
   const today = todayISO();
+  const canShow = ['all', 'today', 'upcoming'].includes(_filter);
+
+  // Collect and filter goal items
+  let metrics    = (canShow && _showTargets)    ? (_goalItems.metrics    || []) : [];
+  let milestones = (canShow && _showMilestones) ? (_goalItems.milestones || []) : [];
+  let habits     = (canShow && _showHabits)     ? (_goalItems.habits     || []) : [];
+
+  if (_activeGoalId) {
+    metrics    = metrics.filter(m => m.goal_id === _activeGoalId);
+    milestones = milestones.filter(m => m.goal_id === _activeGoalId);
+    habits     = habits.filter(h => h.goal_id === _activeGoalId);
+  }
+
+  // Narrow date-gated items when filter = today / upcoming
+  if (_filter === 'today') {
+    metrics    = metrics.filter(m => !m.target_date || m.target_date <= today);
+    milestones = milestones.filter(m => !m.target_date || m.target_date <= today);
+  } else if (_filter === 'upcoming') {
+    const in7 = new Date(); in7.setDate(in7.getDate() + 7);
+    const in7ISO = in7.toISOString().slice(0, 10);
+    metrics    = metrics.filter(m => m.target_date && m.target_date > today && m.target_date <= in7ISO);
+    milestones = milestones.filter(m => m.target_date && m.target_date > today && m.target_date <= in7ISO);
+    habits     = habits; // habits always show when enabled
+  }
+
   const groups = [
-    { label: 'Overdue',   items: tasks.filter(t => t.status === 'pending' && t.due_date && t.due_date < today) },
-    { label: 'Today',     items: tasks.filter(t => t.status === 'pending' && t.due_date === today) },
-    { label: 'Upcoming',  items: tasks.filter(t => t.status === 'pending' && t.due_date && t.due_date > today) },
-    { label: 'No date',   items: tasks.filter(t => t.status === 'pending' && !t.due_date) },
-    { label: 'Completed', items: tasks.filter(t => t.status === 'completed') },
+    {
+      label: 'Overdue',
+      tasks:      tasks.filter(t => t.status === 'pending' && t.due_date && t.due_date < today),
+      metrics:    metrics.filter(m => m.target_date && m.target_date < today),
+      milestones: milestones.filter(m => m.target_date && m.target_date < today),
+    },
+    {
+      label: 'Today',
+      tasks:      tasks.filter(t => t.status === 'pending' && t.due_date === today),
+      metrics:    metrics.filter(m => m.target_date === today),
+      milestones: milestones.filter(m => m.target_date === today),
+    },
+    {
+      label: 'Upcoming',
+      tasks:      tasks.filter(t => t.status === 'pending' && t.due_date && t.due_date > today),
+      metrics:    metrics.filter(m => m.target_date && m.target_date > today),
+      milestones: milestones.filter(m => m.target_date && m.target_date > today),
+    },
+    {
+      label: 'No date',
+      tasks:      tasks.filter(t => t.status === 'pending' && !t.due_date),
+      metrics:    metrics.filter(m => !m.target_date),
+      milestones: milestones.filter(m => !m.target_date),
+    },
+    {
+      label: 'Completed',
+      tasks:      tasks.filter(t => t.status === 'completed'),
+      metrics:    [],
+      milestones: [],
+    },
   ];
-  return groups.filter(g => g.items.length).map(g => `
-    <div class="task-group">
-      <div class="section-header">${g.label} <span style="opacity:.5;font-weight:400">(${g.items.length})</span></div>
-      ${g.items.map(t => taskRowHTML(t, isWide)).join('')}
-    </div>`).join('');
+
+  let html = groups
+    .filter(g => g.tasks.length || g.metrics.length || g.milestones.length)
+    .map(g => {
+      const total = g.tasks.length + g.metrics.length + g.milestones.length;
+      return `
+        <div class="task-group">
+          <div class="section-header">${g.label} <span style="opacity:.5;font-weight:400">(${total})</span></div>
+          ${g.tasks.map(t => taskRowHTML(t, isWide)).join('')}
+          ${g.milestones.map(m => milestoneRowHTML(m)).join('')}
+          ${g.metrics.map(m => metricRowHTML(m)).join('')}
+        </div>`;
+    }).join('');
+
+  if (habits.length) {
+    html += `
+      <div class="task-group">
+        <div class="section-header">Habits this week <span style="opacity:.5;font-weight:400">(${habits.length})</span></div>
+        ${habits.map(h => habitRowHTML(h)).join('')}
+      </div>`;
+  }
+
+  return html || `<div class="empty-state" style="padding:28px 12px;text-align:center"><div class="empty-state-text">No tasks</div></div>`;
 }
 
 // ── Task row HTML ─────────────────────────────────────────────
@@ -365,6 +491,114 @@ function taskRowHTML(task, isWide = false) {
       <div class="task-row-head">${innerContent}</div>
       <div class="task-row-preview">${preview}</div>
       <div class="task-expand-body"></div>
+    </div>`;
+}
+
+function milestoneRowHTML(ms) {
+  const today = todayISO();
+  const overdue = ms.target_date && ms.target_date < today;
+  const isToday = ms.target_date === today;
+  let dueLabelHTML = '';
+  if (ms.target_date) {
+    let cls = 'due-label';
+    if (overdue) cls += ' overdue';
+    else if (isToday) cls += ' today-due';
+    const label = overdue
+      ? `Overdue · ${formatDateShort(ms.target_date)}`
+      : isToday ? 'Today' : formatDateShort(ms.target_date);
+    dueLabelHTML = `<span class="${cls}">${label}</span>`;
+  }
+  return `
+    <div class="goal-item-row milestone-row" data-ms-id="${ms.id}" data-goal-id="${ms.goal_id}">
+      <div class="goal-item-check"><div class="checkbox-circle"></div></div>
+      <div class="goal-item-body">
+        <div class="goal-item-title">${escHtml(ms.title)}</div>
+        <div class="goal-item-meta">
+          <span class="goal-item-type-badge badge-milestone">milestone</span>
+          <span class="tag-badge tag-amber" style="font-size:11px">${escHtml(ms.goal_title)}</span>
+        </div>
+      </div>
+      <div class="goal-item-right">${dueLabelHTML}</div>
+    </div>`;
+}
+
+function metricRowHTML(m) {
+  const today = todayISO();
+  const sv  = m.start_value || 0;
+  const cv  = m.current_value != null ? m.current_value : sv;
+  const tv  = m.target_value;
+  const u   = m.unit ? ` ${escHtml(m.unit)}` : '';
+  const pct = tv != null && tv !== sv
+    ? Math.round(Math.max(0, Math.min(100, (cv - sv) / (tv - sv) * 100))) : 0;
+  let dueLabelHTML = '';
+  if (m.target_date) {
+    const overdue = m.target_date < today;
+    const isToday = m.target_date === today;
+    let cls = 'due-label';
+    if (overdue) cls += ' overdue';
+    else if (isToday) cls += ' today-due';
+    const label = overdue
+      ? `Overdue · ${formatDateShort(m.target_date)}`
+      : isToday ? 'Today' : formatDateShort(m.target_date);
+    dueLabelHTML = `<span class="${cls}">${label}</span>`;
+  }
+  const progressHTML = tv != null ? `
+    <div class="goal-item-progress">
+      <div class="progress-bar" style="flex:1;height:3px"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <span style="font-size:11px;color:var(--text-muted)">${cv}${u} / ${tv}${u} &middot; ${pct}%</span>
+    </div>` : '';
+  return `
+    <div class="goal-item-row metric-row" data-goal-id="${m.goal_id}" style="cursor:pointer">
+      <div class="goal-item-icon">≡</div>
+      <div class="goal-item-body">
+        <div class="goal-item-title">${escHtml(m.label)}</div>
+        <div class="goal-item-meta">
+          <span class="goal-item-type-badge badge-metric">target</span>
+          <span class="tag-badge tag-amber" style="font-size:11px">${escHtml(m.goal_title)}</span>
+        </div>
+        ${progressHTML}
+      </div>
+      <div class="goal-item-right">${dueLabelHTML}</div>
+    </div>`;
+}
+
+function habitRowHTML(h) {
+  const entries  = h.week_entries || [];
+  const totalMin = Math.round(entries.reduce((s, e) => s + (e.value || 0), 0));
+  const days     = new Set(entries.map(e => e.logged_at.slice(0, 10))).size;
+  const wtMin    = h.weekly_target_minutes;
+  const mdTarget = h.min_days_per_week;
+  const statParts = [];
+  let pct = 0;
+  if (wtMin) {
+    const hrs = parseFloat((totalMin / 60).toFixed(1));
+    const tgtHrs = parseFloat((wtMin / 60).toFixed(1));
+    statParts.push(`${hrs} / ${tgtHrs} hrs`);
+    pct = Math.min(100, Math.round(totalMin / wtMin * 100));
+  }
+  if (mdTarget) {
+    statParts.push(`${days} / ${mdTarget} days`);
+    if (!wtMin) pct = Math.min(100, Math.round(days / mdTarget * 100));
+  }
+  if (!wtMin && !mdTarget) statParts.push(`${days} day${days !== 1 ? 's' : ''} logged`);
+  const hasTarget = !!(wtMin || mdTarget);
+  const done = hasTarget && (wtMin ? totalMin >= wtMin : true) && (mdTarget ? days >= mdTarget : true);
+  return `
+    <div class="goal-item-row habit-row${done ? ' habit-done' : ''}" data-goal-id="${h.goal_id}" style="cursor:pointer">
+      <div class="goal-item-icon">↺</div>
+      <div class="goal-item-body">
+        <div class="goal-item-title">${escHtml(h.label)}${done ? '<span class="di-done-badge" style="margin-left:6px;font-size:10px">✓ Done</span>' : ''}</div>
+        <div class="goal-item-meta">
+          <span class="goal-item-type-badge badge-habit">habit</span>
+          <span class="tag-badge tag-amber" style="font-size:11px">${escHtml(h.goal_title)}</span>
+          <span style="font-size:11px;color:var(--text-muted)">${statParts.join(' · ')}</span>
+        </div>
+        ${hasTarget ? `<div class="goal-item-progress">
+          <div class="progress-bar" style="flex:1;height:3px">
+            <div class="progress-fill${done ? ' di-habit-bar-on' : ''}" style="width:${pct}%"></div>
+          </div>
+        </div>` : ''}
+      </div>
     </div>`;
 }
 

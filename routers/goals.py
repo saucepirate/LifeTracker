@@ -196,6 +196,52 @@ def create_goal(body: GoalCreate):
     return goal
 
 
+@router.get("/items")
+def get_goal_items():
+    conn = database.get_connection()
+    week_start = (date.today() - timedelta(days=7)).isoformat()
+
+    metrics_rows = conn.execute("""
+        SELECT gm.*, g.title as goal_title
+        FROM goal_metrics gm
+        JOIN goals g ON g.id = gm.goal_id
+        WHERE (gm.completed = 0 OR gm.completed IS NULL)
+        ORDER BY CASE WHEN gm.target_date IS NULL THEN 1 ELSE 0 END, gm.target_date, gm.id
+    """).fetchall()
+
+    milestones_rows = conn.execute("""
+        SELECT gms.*, g.title as goal_title
+        FROM goal_milestones gms
+        JOIN goals g ON g.id = gms.goal_id
+        WHERE (gms.completed = 0 OR gms.completed IS NULL)
+        ORDER BY CASE WHEN gms.target_date IS NULL THEN 1 ELSE 0 END, gms.target_date, gms.id
+    """).fetchall()
+
+    habits_rows = conn.execute("""
+        SELECT gh.*, g.title as goal_title
+        FROM goal_habits gh
+        JOIN goals g ON g.id = gh.goal_id
+        ORDER BY gh.id
+    """).fetchall()
+
+    habit_list = []
+    for h in habits_rows:
+        hd = dict(h)
+        entries = conn.execute(
+            "SELECT * FROM goal_log_entries WHERE goal_id = ? AND habit_id = ? AND logged_at >= ? ORDER BY logged_at DESC",
+            (h['goal_id'], h['id'], week_start)
+        ).fetchall()
+        hd['week_entries'] = [dict(e) for e in entries]
+        habit_list.append(hd)
+
+    conn.close()
+    return {
+        "metrics": [dict(m) for m in metrics_rows],
+        "milestones": [dict(m) for m in milestones_rows],
+        "habits": habit_list,
+    }
+
+
 @router.get("/{goal_id}")
 def get_goal(goal_id: int):
     conn = database.get_connection()
