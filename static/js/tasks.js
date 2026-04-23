@@ -135,31 +135,30 @@ function renderStats() {
 function renderSecondaryFilters() {
   const container = document.getElementById('tasks-secondary-filters');
   if (!container) return;
-  const hasGoals = _tGoals.length > 0;
+
+  const tagPills = _tags.map(tg => {
+    const active = _activeTagIds.has(tg.id);
+    return `<button class="tf-pill tag-filter-pill${active ? ' active' : ''}" data-tag-id="${tg.id}"
+      style="${active ? `background:var(--tag-${tg.color}-bg);color:var(--tag-${tg.color}-text);border-color:transparent` : ''}"
+    >${escHtml(tg.name)}</button>`;
+  }).join('');
+
+  const goalSelect = _tGoals.length ? `
+    <div class="tf-sep"></div>
+    <select id="goal-filter-select" class="tf-goal-select">
+      <option value="">All goals</option>
+      ${_tGoals.map(g => `<option value="${g.id}"${_activeGoalId === g.id ? ' selected' : ''}>${escHtml(g.title)}</option>`).join('')}
+    </select>` : '';
 
   container.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-      <span style="font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap">Tags:</span>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${_tags.map(tg => {
-          const active = _activeTagIds.has(tg.id);
-          return `<button class="filter-pill tag-filter-pill${active ? ' active' : ''}" data-tag-id="${tg.id}"
-            style="${active ? `background:var(--tag-${tg.color}-bg);color:var(--tag-${tg.color}-text);border-color:transparent` : ''}"
-          >${escHtml(tg.name)}</button>`;
-        }).join('')}
-      </div>
-      ${hasGoals ? `<select id="goal-filter-select" style="font-size:13px;padding:4px 8px;border:var(--border-subtle);border-radius:var(--radius-pill);background:var(--bg-card);color:var(--text-secondary);cursor:pointer;outline:none">
-        <option value="">All goals</option>
-        ${_tGoals.map(g => `<option value="${g.id}"${_activeGoalId === g.id ? ' selected' : ''}>${escHtml(g.title)}</option>`).join('')}
-      </select>` : ''}
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-      <span style="font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap">Show:</span>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="filter-pill goal-type-pill${_showTargets ? ' active' : ''}" data-type="targets">Targets</button>
-        <button class="filter-pill goal-type-pill${_showMilestones ? ' active' : ''}" data-type="milestones">Milestones</button>
-        <button class="filter-pill goal-type-pill${_showHabits ? ' active' : ''}" data-type="habits">Habits</button>
-      </div>
+    <div class="task-filter-bar">
+      ${tagPills}
+      ${goalSelect}
+      <div class="tf-sep"></div>
+      <span class="tf-label">Include</span>
+      <button class="tf-pill goal-type-pill${_showTargets   ? ' active tf-active--cyan'   : ''}" data-type="targets">Targets</button>
+      <button class="tf-pill goal-type-pill${_showMilestones ? ' active tf-active--purple' : ''}" data-type="milestones">Milestones</button>
+      <button class="tf-pill goal-type-pill${_showHabits    ? ' active tf-active--green'  : ''}" data-type="habits">Habits</button>
     </div>`;
 
   container.querySelectorAll('.tag-filter-pill').forEach(pill => {
@@ -183,7 +182,7 @@ function renderSecondaryFilters() {
   container.querySelectorAll('.goal-type-pill').forEach(pill => {
     pill.addEventListener('click', () => {
       const type = pill.dataset.type;
-      if (type === 'targets')    _showTargets   = !_showTargets;
+      if (type === 'targets')         _showTargets    = !_showTargets;
       else if (type === 'milestones') _showMilestones = !_showMilestones;
       else if (type === 'habits')     _showHabits     = !_showHabits;
       renderSecondaryFilters();

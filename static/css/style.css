@@ -552,7 +552,7 @@ input, textarea, select { font: inherit; }
 }
 
 #tasks-filter-pills {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .goals-filter-bar {
@@ -592,6 +592,73 @@ input, textarea, select { font: inherit; }
   border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
   font-weight: 500;
 }
+
+/* ── Task filter bar (secondary filters) ─────────────────── */
+.task-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding: 7px 0;
+  margin-bottom: 14px;
+  border-top: var(--border-subtle);
+  border-bottom: var(--border-subtle);
+}
+
+.tf-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
+  margin: 0 3px;
+  align-self: center;
+}
+
+.tf-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  white-space: nowrap;
+  margin-right: 1px;
+}
+
+.tf-pill {
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  border: var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  white-space: nowrap;
+}
+.tf-pill:hover { background: var(--bg-hover); }
+
+.tf-pill.active {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  font-weight: 500;
+}
+
+/* Include toggle active states use type-specific neon colors */
+.tf-active--cyan   { background: rgba(0,229,255,.12)  !important; color: var(--neon-cyan)   !important; border-color: rgba(0,229,255,.35)  !important; }
+.tf-active--purple { background: rgba(191,95,255,.12) !important; color: var(--neon-purple) !important; border-color: rgba(191,95,255,.35) !important; }
+.tf-active--green  { background: rgba(0,255,136,.12)  !important; color: var(--neon-green)  !important; border-color: rgba(0,255,136,.35)  !important; }
+
+.tf-goal-select {
+  font-size: 12px;
+  padding: 3px 8px;
+  border: var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  outline: none;
+}
+.tf-goal-select:focus { border-color: var(--color-accent); }
 
 /* ── Section headers (task groups, etc.) ─────────────────── */
 .section-header {
