@@ -1388,6 +1388,26 @@ input, textarea, select { font: inherit; }
 
 .di-habit-bar-on { background: var(--color-on-track, #2ECC71) !important; }
 
+.di-habit-done {
+  border-left: 3px solid var(--color-on-track, #2ECC71);
+  padding-left: 8px;
+  margin-left: -11px;
+}
+
+.di-done-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  color: var(--color-on-track, #2ECC71);
+  background: color-mix(in srgb, var(--color-on-track, #2ECC71) 12%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .di-empty {
   font-size: 13px;
   color: var(--text-muted);

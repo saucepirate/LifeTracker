@@ -270,19 +270,20 @@ function _renderInsights(data) {
       }
       if (!wtMin && !mdTarget) statParts.push(`${days} day${days !== 1 ? 's' : ''} logged`);
 
-      const onTrack = (wtMin ? totalMin >= wtMin : true) && (mdTarget ? days >= mdTarget : true);
-      const barCls  = onTrack ? 'di-habit-bar-on' : '';
+      const hasTarget = !!(wtMin || mdTarget);
+      const done    = hasTarget && (wtMin ? totalMin >= wtMin : true) && (mdTarget ? days >= mdTarget : true);
+      const barCls  = done ? 'di-habit-bar-on' : '';
 
       return `
-        <div class="di-habit-row" data-nav="goals">
+        <div class="di-habit-row${done ? ' di-habit-done' : ''}" data-nav="goals">
           <div class="di-row-main">
-            <span class="di-label">${escHtml(h.label)}</span>
+            <span class="di-label">${escHtml(h.label)}${done ? '<span class="di-done-badge">✓ Done</span>' : ''}</span>
             <span class="di-habit-stat">${statParts.join(' · ')}</span>
           </div>
           <div class="di-goal-tag">${escHtml(h.goal_title)}</div>
-          <div class="progress-bar" style="height:4px;margin-top:5px">
+          ${hasTarget ? `<div class="progress-bar" style="height:4px;margin-top:5px">
             <div class="progress-fill ${barCls}" style="width:${pct}%"></div>
-          </div>
+          </div>` : ''}
         </div>`;
     }).join('');
   } else {
