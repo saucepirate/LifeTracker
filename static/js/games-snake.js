@@ -1,6 +1,8 @@
 // ── Snake ─────────────────────────────────────────────────────
 function startSnake(container, onGameOver, updateScore) {
-  const COLS = 20, ROWS = 20, CELL = 24;
+  const COLS = 30, ROWS = 20, CELL = 24;
+  const SPEED = 7;          // frames between snake moves (fixed)
+  const COUNTDOWN = 3000;   // ms before snake starts moving
   const W = COLS * CELL, H = ROWS * CELL;
 
   const canvas = document.createElement('canvas');
@@ -11,16 +13,16 @@ function startSnake(container, onGameOver, updateScore) {
   container.appendChild(canvas);
   const ctx = canvas.getContext('2d');
 
-  let snake, dir, nextDir, food, score, speed, frameCount, raf, alive;
+  let snake, dir, nextDir, food, score, frameCount, raf, alive, startTime;
 
   function init() {
-    snake = [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }];
+    snake = [{ x: 15, y: 10 }, { x: 14, y: 10 }, { x: 13, y: 10 }];
     dir = { x: 1, y: 0 };
     nextDir = { x: 1, y: 0 };
     score = 0;
-    speed = 8;
     frameCount = 0;
     alive = true;
+    startTime = null;
     placeFood();
   }
 
@@ -48,7 +50,7 @@ function startSnake(container, onGameOver, updateScore) {
 
   document.addEventListener('keydown', onKey);
 
-  function draw() {
+  function drawBoard() {
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, W, H);
 
@@ -69,27 +71,40 @@ function startSnake(container, onGameOver, updateScore) {
     });
   }
 
-  function loop() {
+  function loop(ts) {
     raf = requestAnimationFrame(loop);
+
+    if (startTime === null) startTime = ts;
+    const elapsed = ts - startTime;
+
+    // Countdown phase
+    if (elapsed < COUNTDOWN) {
+      const remaining = Math.ceil((COUNTDOWN - elapsed) / 1000);
+      drawBoard();
+      ctx.fillStyle = 'rgba(0,0,0,0.52)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${CELL * 3}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(remaining, W / 2, H / 2);
+      return;
+    }
+
+    // Game phase
     frameCount++;
-    if (frameCount % Math.max(2, 10 - Math.floor(speed / 2)) !== 0) {
-      draw();
+    if (frameCount % SPEED !== 0) {
+      drawBoard();
       return;
     }
 
     dir = nextDir;
     const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
 
-    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
+    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS ||
+        snake.some(s => s.x === head.x && s.y === head.y)) {
       cancelAnimationFrame(raf);
-      draw();
-      alive = false;
-      onGameOver(score);
-      return;
-    }
-    if (snake.some(s => s.x === head.x && s.y === head.y)) {
-      cancelAnimationFrame(raf);
-      draw();
+      drawBoard();
       alive = false;
       onGameOver(score);
       return;
@@ -100,18 +115,16 @@ function startSnake(container, onGameOver, updateScore) {
     if (head.x === food.x && head.y === food.y) {
       score += 10;
       updateScore(score);
-      const eaten = Math.floor(score / 10);
-      speed = 8 + Math.floor(eaten / 5) * 2;
       placeFood();
     } else {
       snake.pop();
     }
 
-    draw();
+    drawBoard();
   }
 
   init();
-  loop();
+  raf = requestAnimationFrame(loop);
 
   return function cleanup() {
     cancelAnimationFrame(raf);

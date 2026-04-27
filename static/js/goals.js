@@ -41,36 +41,7 @@ registerPage('goals', async function(content) {
           <button class="btn btn-primary btn-sm" id="new-goal-btn">+ New goal</button>
         </div>
         <div id="goals-stats" class="stats-row" style="grid-template-columns:repeat(4,1fr)"></div>
-        <div class="goals-filter-bar">
-          <button class="btn btn-secondary btn-sm goals-filter-toggle" id="goals-filter-toggle">Filters</button>
-          <div id="goals-filter-panels" class="goals-filter-inset">
-            <div class="goals-filter-section">
-              <div class="goals-filter-label">Status</div>
-              <div class="filter-pills" id="goals-status-pills">
-                <button class="filter-pill active" data-status="active">Active</button>
-                <button class="filter-pill" data-status="achieved">Achieved</button>
-                <button class="filter-pill" data-status="abandoned">Abandoned</button>
-                <button class="filter-pill" data-status="all">All</button>
-              </div>
-            </div>
-            <div class="goals-filter-section">
-              <div class="goals-filter-label">Progress</div>
-              <div class="filter-pills" id="goals-track-pills">
-                <button class="filter-pill active" data-track="all">All</button>
-                <button class="filter-pill" data-track="on-track">On track</button>
-                <button class="filter-pill" data-track="off-track">Off track</button>
-              </div>
-            </div>
-            <div class="goals-filter-section">
-              <div class="goals-filter-label">Area</div>
-              <div class="filter-pills" id="goals-area-pills">
-                ${GOAL_AREAS.map(a =>
-                  `<button class="filter-pill" data-area="${a}">${a}</button>`
-                ).join('')}
-              </div>
-            </div>
-          </div>
-        </div>
+        <div id="goals-filter-bar"></div>
         <div id="goals-grid" class="goals-grid"></div>
       </div>
       <div class="goals-detail-pane" id="goals-detail-pane"></div>
@@ -79,47 +50,7 @@ registerPage('goals', async function(content) {
 
   document.getElementById('new-goal-btn').addEventListener('click', openNewGoalSidebar);
 
-  document.getElementById('goals-status-pills').addEventListener('click', e => {
-    const pill = e.target.closest('.filter-pill');
-    if (!pill) return;
-    _gStatusFilter = pill.dataset.status;
-    document.querySelectorAll('#goals-status-pills .filter-pill').forEach(p =>
-      p.classList.toggle('active', p === pill)
-    );
-    _updateGFilterBtn();
-    renderGGrid();
-  });
-
-  document.getElementById('goals-filter-toggle').addEventListener('click', () => {
-    document.getElementById('goals-filter-panels').classList.toggle('open');
-  });
-
-  document.getElementById('goals-track-pills').addEventListener('click', e => {
-    const pill = e.target.closest('.filter-pill');
-    if (!pill) return;
-    _gTrackFilter = pill.dataset.track;
-    document.querySelectorAll('#goals-track-pills .filter-pill').forEach(p =>
-      p.classList.toggle('active', p === pill)
-    );
-    _updateGFilterBtn();
-    renderGGrid();
-  });
-
-  document.getElementById('goals-area-pills').addEventListener('click', e => {
-    const pill = e.target.closest('.filter-pill');
-    if (!pill) return;
-    const area = pill.dataset.area;
-    if (_gAreaFilters.has(area)) {
-      _gAreaFilters.delete(area);
-      pill.classList.remove('active');
-    } else {
-      _gAreaFilters.add(area);
-      pill.classList.add('active');
-    }
-    _updateGFilterBtn();
-    renderGGrid();
-  });
-
+  renderGFilters();
   await loadGoals();
   renderGAll();
   if (window._openGoalId) {
@@ -129,11 +60,78 @@ registerPage('goals', async function(content) {
   }
 });
 
-function _updateGFilterBtn() {
-  const btn = document.getElementById('goals-filter-toggle');
-  if (!btn) return;
-  const n = (_gStatusFilter !== 'active' ? 1 : 0) + (_gTrackFilter !== 'all' ? 1 : 0) + _gAreaFilters.size;
-  btn.textContent = n > 0 ? `Filters (${n})` : 'Filters';
+function renderGFilters() {
+  const container = document.getElementById('goals-filter-bar');
+  if (!container) return;
+
+  let open = localStorage.getItem('gf_open') !== 'false';
+
+  function mkSection(label, body, hasActive) {
+    return `
+      <div class="tf-section">
+        <button class="tf-section-hdr">
+          <svg class="tf-section-chevron${open ? ' open' : ''}" viewBox="0 0 12 12" fill="none">
+            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="tf-section-name">${label}</span>
+          ${hasActive ? '<span class="tf-active-dot"></span>' : ''}
+        </button>
+        <div class="tf-section-body${open ? '' : ' collapsed'}">${body}</div>
+      </div>`;
+  }
+
+  const statusPills = ['active','achieved','abandoned','all'].map(s =>
+    `<button class="tf-pill gf-status${_gStatusFilter === s ? ' active' : ''}" data-status="${s}">${capitalize(s)}</button>`
+  ).join('');
+
+  const trackPills = [['all','All'],['on-track','On track'],['off-track','Off track']].map(([v,l]) =>
+    `<button class="tf-pill gf-track${_gTrackFilter === v ? ' active' : ''}" data-track="${v}">${l}</button>`
+  ).join('');
+
+  const areaPills = GOAL_AREAS.map(a =>
+    `<button class="tf-pill gf-area${_gAreaFilters.has(a) ? ' active' : ''}" data-area="${a}">${a}</button>`
+  ).join('');
+
+  container.innerHTML = `<div class="task-filter-bar">
+    ${mkSection('Status',   `<div class="tf-tag-wrap">${statusPills}</div>`, _gStatusFilter !== 'active')}
+    ${mkSection('Progress', `<div class="tf-tag-wrap">${trackPills}</div>`,  _gTrackFilter !== 'all')}
+    ${mkSection('Area',     `<div class="tf-tag-wrap">${areaPills}</div>`,   _gAreaFilters.size > 0)}
+  </div>`;
+
+  container.querySelectorAll('.tf-section-hdr').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      open = !open;
+      localStorage.setItem('gf_open', open);
+      container.querySelectorAll('.tf-section-chevron').forEach(c => c.classList.toggle('open', open));
+      container.querySelectorAll('.tf-section-body').forEach(b => b.classList.toggle('collapsed', !open));
+    });
+  });
+
+  container.querySelectorAll('.gf-status').forEach(pill => {
+    pill.addEventListener('click', () => {
+      _gStatusFilter = pill.dataset.status;
+      renderGFilters();
+      renderGGrid();
+    });
+  });
+
+  container.querySelectorAll('.gf-track').forEach(pill => {
+    pill.addEventListener('click', () => {
+      _gTrackFilter = pill.dataset.track;
+      renderGFilters();
+      renderGGrid();
+    });
+  });
+
+  container.querySelectorAll('.gf-area').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const area = pill.dataset.area;
+      if (_gAreaFilters.has(area)) _gAreaFilters.delete(area);
+      else _gAreaFilters.add(area);
+      renderGFilters();
+      renderGGrid();
+    });
+  });
 }
 
 // ── Data loading ──────────────────────────────────────────────

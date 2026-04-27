@@ -9,7 +9,6 @@ let _nTagFilters  = new Set();
 let _nSearch      = '';
 let _nPinnedOnly  = false;
 let _nSort        = 'updated';
-let _nFiltersOpen = false;
 let _nSaveTimer   = null;
 let _quill        = null;
 
@@ -49,104 +48,114 @@ function _renderListView() {
   const content = document.getElementById('content');
   if (!content) return;
 
-  const activeFilterCount = _nTagFilters.size + (_nPinnedOnly ? 1 : 0) + (_nTripId ? 1 : 0);
-
   content.innerHTML = `
     <div class="notes-page">
       <div class="notes-header">
         <h1 class="page-title">Notes</h1>
         <input class="form-input" id="n-search" placeholder="Search notes…" value="${escHtml(_nSearch)}" style="flex:1;max-width:340px;font-size:13px">
-        <button class="btn btn-secondary btn-sm" id="n-filters-btn">
-          Filters${activeFilterCount > 0 ? ` <span class="n-filter-badge">${activeFilterCount}</span>` : ''}
-        </button>
         <button class="btn btn-primary btn-sm" id="n-new-btn">+ New note</button>
       </div>
 
-      <div id="n-filters-panel" class="notes-filters-panel" style="${_nFiltersOpen ? '' : 'display:none'}">
-        <div class="notes-filters-row">
-          <span class="notes-filter-label">Tags</span>
-          <div style="display:flex;flex-wrap:wrap;gap:5px">
-            ${_allTags.map(t => `
-              <label class="n-tag-pill tag-${t.color}${_nTagFilters.has(t.id) ? ' checked' : ''}">
-                <input type="checkbox" style="display:none" data-tid="${t.id}" ${_nTagFilters.has(t.id) ? 'checked' : ''}>
-                ${escHtml(t.name)}
-              </label>`).join('')}
-          </div>
-        </div>
-        <div class="notes-filters-row">
-          <span class="notes-filter-label">Options</span>
-          <label class="notes-filter-option">
-            <input type="checkbox" id="n-pinned-only" ${_nPinnedOnly ? 'checked' : ''}> Pinned only
-          </label>
-          <span class="notes-filter-label" style="margin-left:12px">Sort</span>
-          <select id="n-sort" class="form-select" style="font-size:13px;padding:4px 8px;height:auto;width:auto">
-            <option value="updated" ${_nSort==='updated'?'selected':''}>Last updated</option>
-            <option value="created" ${_nSort==='created'?'selected':''}>Date created</option>
-            <option value="title"   ${_nSort==='title'  ?'selected':''}>Title A–Z</option>
-          </select>
-          ${_nTrips.length ? `
-          <span class="notes-filter-label" style="margin-left:12px">Trip</span>
-          <select id="n-trip-filter" class="form-select" style="font-size:13px;padding:4px 8px;height:auto;width:auto;min-width:140px">
-            <option value="">All trips</option>
-            ${_nTrips.map(t => `<option value="${t.id}"${_nTripId === t.id ? ' selected' : ''}>${escHtml(t.name)}</option>`).join('')}
-          </select>` : ''}
-        </div>
-      </div>
+      <div id="n-filter-bar"></div>
 
       <div id="n-grid" class="notes-grid"></div>
     </div>`;
 
-  // Search
   const searchEl = document.getElementById('n-search');
   searchEl.addEventListener('input', e => { _nSearch = e.target.value; _renderGrid(); });
   searchEl.addEventListener('keydown', e => { if (e.key === 'Escape') { _nSearch = ''; searchEl.value = ''; _renderGrid(); } });
 
-  // Filters toggle
-  document.getElementById('n-filters-btn').addEventListener('click', () => {
-    _nFiltersOpen = !_nFiltersOpen;
-    document.getElementById('n-filters-panel').style.display = _nFiltersOpen ? 'flex' : 'none';
+  document.getElementById('n-new-btn').addEventListener('click', doCreateNote);
+
+  renderNFilters();
+  _renderGrid();
+}
+
+function renderNFilters() {
+  const container = document.getElementById('n-filter-bar');
+  if (!container) return;
+
+  let open = localStorage.getItem('nf_open') !== 'false';
+
+  function mkSection(label, body, hasActive) {
+    return `
+      <div class="tf-section">
+        <button class="tf-section-hdr">
+          <svg class="tf-section-chevron${open ? ' open' : ''}" viewBox="0 0 12 12" fill="none">
+            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="tf-section-name">${label}</span>
+          ${hasActive ? '<span class="tf-active-dot"></span>' : ''}
+        </button>
+        <div class="tf-section-body${open ? '' : ' collapsed'}">${body}</div>
+      </div>`;
+  }
+
+  const tagPills = _allTags.map(t => {
+    const active = _nTagFilters.has(t.id);
+    return `<button class="tf-pill nf-tag${active ? ' active' : ''}" data-tid="${t.id}"
+      style="${active ? `background:var(--tag-${t.color}-bg);color:var(--tag-${t.color}-text);border-color:transparent` : ''}"
+    >${escHtml(t.name)}</button>`;
+  }).join('');
+
+  const tagsSection = _allTags.length ? mkSection('Tags',
+    `<div class="tf-tag-wrap">${tagPills}</div>`,
+    _nTagFilters.size > 0) : '';
+
+  const optionsSection = mkSection('Options',
+    `<button class="tf-pill nf-pinned${_nPinnedOnly ? ' active' : ''}">Pinned only</button>
+     <span class="tf-label" style="margin-left:6px">Sort</span>
+     <select id="n-sort" class="tf-goal-select">
+       <option value="updated" ${_nSort==='updated'?'selected':''}>Last updated</option>
+       <option value="created" ${_nSort==='created'?'selected':''}>Date created</option>
+       <option value="title"   ${_nSort==='title'  ?'selected':''}>Title A–Z</option>
+     </select>`,
+    _nPinnedOnly || _nSort !== 'updated');
+
+  const tripSection = _nTrips.length ? mkSection('Trip',
+    `<select id="n-trip-filter" class="tf-goal-select" style="min-width:140px">
+       <option value="">All trips</option>
+       ${_nTrips.map(t => `<option value="${t.id}"${_nTripId === t.id ? ' selected' : ''}>${escHtml(t.name)}</option>`).join('')}
+     </select>`,
+    _nTripId !== null) : '';
+
+  container.innerHTML = `<div class="task-filter-bar">${tagsSection}${optionsSection}${tripSection}</div>`;
+
+  container.querySelectorAll('.tf-section-hdr').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      open = !open;
+      localStorage.setItem('nf_open', open);
+      container.querySelectorAll('.tf-section-chevron').forEach(c => c.classList.toggle('open', open));
+      container.querySelectorAll('.tf-section-body').forEach(b => b.classList.toggle('collapsed', !open));
+    });
   });
 
-  // Tag checkboxes
-  document.querySelectorAll('#n-filters-panel .n-tag-pill').forEach(pill => {
+  container.querySelectorAll('.nf-tag').forEach(pill => {
     pill.addEventListener('click', () => {
-      const cb  = pill.querySelector('input');
-      const tid = parseInt(cb.dataset.tid);
-      cb.checked = !cb.checked;
-      pill.classList.toggle('checked', cb.checked);
-      cb.checked ? _nTagFilters.add(tid) : _nTagFilters.delete(tid);
-      _updateFilterBtn();
+      const tid = parseInt(pill.dataset.tid);
+      if (_nTagFilters.has(tid)) _nTagFilters.delete(tid);
+      else _nTagFilters.add(tid);
+      renderNFilters();
       _renderGrid();
     });
   });
 
-  document.getElementById('n-pinned-only').addEventListener('change', e => {
-    _nPinnedOnly = e.target.checked;
-    _updateFilterBtn();
+  container.querySelector('.nf-pinned')?.addEventListener('click', () => {
+    _nPinnedOnly = !_nPinnedOnly;
+    renderNFilters();
     _renderGrid();
   });
 
-  document.getElementById('n-sort').addEventListener('change', e => {
+  container.querySelector('#n-sort')?.addEventListener('change', e => {
     _nSort = e.target.value;
     _renderGrid();
   });
 
-  document.getElementById('n-trip-filter')?.addEventListener('change', e => {
+  container.querySelector('#n-trip-filter')?.addEventListener('change', e => {
     _nTripId = parseInt(e.target.value) || null;
-    _updateFilterBtn();
+    renderNFilters();
     _renderGrid();
   });
-
-  document.getElementById('n-new-btn').addEventListener('click', doCreateNote);
-
-  _renderGrid();
-}
-
-function _updateFilterBtn() {
-  const btn = document.getElementById('n-filters-btn');
-  if (!btn) return;
-  const n = _nTagFilters.size + (_nPinnedOnly ? 1 : 0) + (_nTripId ? 1 : 0);
-  btn.innerHTML = `Filters${n > 0 ? ` <span class="n-filter-badge">${n}</span>` : ''}`;
 }
 
 function _renderGrid() {

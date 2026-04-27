@@ -126,10 +126,7 @@ function renderSecondaryFilters() {
   const container = document.getElementById('tasks-filter-bar');
   if (!container) return;
 
-  const sections = (() => {
-    const s = JSON.parse(localStorage.getItem('tf_sections') || '{}');
-    return { status: s.status !== false, tags: s.tags !== false, trip: s.trip !== false, goal: s.goal !== false };
-  })();
+  let open = localStorage.getItem('tf_open') !== 'false';
 
   const statusPills = ['all','today','upcoming','recurring','completed'].map(f =>
     `<button class="tf-pill tf-status${_filter === f ? ' active' : ''}" data-filter="${f}">${capitalize(f)}</button>`
@@ -154,11 +151,10 @@ function renderSecondaryFilters() {
       ${_tTrips.map(t => `<option value="${t.id}"${_activeTripId === t.id ? ' selected' : ''}>${escHtml(t.name)}</option>`).join('')}
     </select>` : '';
 
-  function mkSection(key, label, body, hasActive) {
-    const open = sections[key];
+  function mkSection(label, body, hasActive) {
     return `
       <div class="tf-section">
-        <button class="tf-section-hdr" data-section="${key}">
+        <button class="tf-section-hdr">
           <svg class="tf-section-chevron${open ? ' open' : ''}" viewBox="0 0 12 12" fill="none">
             <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -169,19 +165,19 @@ function renderSecondaryFilters() {
       </div>`;
   }
 
-  const statusSection = mkSection('status', 'Status',
+  const statusSection = mkSection('Status',
     `<div class="tf-group">${statusPills}</div>`,
     _filter !== 'all');
 
-  const tagsSection = _tags.length ? mkSection('tags', 'Tags',
+  const tagsSection = _tags.length ? mkSection('Tags',
     `<div class="tf-tag-wrap">${tagPills}</div>`,
     _activeTagIds.size > 0) : '';
 
-  const tripSection = _tTrips.length ? mkSection('trip', 'Trip',
+  const tripSection = _tTrips.length ? mkSection('Trip',
     tripSelect,
     _activeTripId !== null) : '';
 
-  const goalSection = mkSection('goal', 'Goal',
+  const goalSection = mkSection('Goal',
     `<div class="tf-row">${goalSelect}<span class="tf-label">Include</span>
       <button class="tf-pill goal-type-pill${_showTargets    ? ' active tf-active--cyan'   : ''}" data-type="targets">Targets</button>
       <button class="tf-pill goal-type-pill${_showMilestones ? ' active tf-active--purple' : ''}" data-type="milestones">Milestones</button>
@@ -191,17 +187,13 @@ function renderSecondaryFilters() {
 
   container.innerHTML = `<div class="task-filter-bar">${statusSection}${tagsSection}${tripSection}${goalSection}</div>`;
 
-  // Section expand/collapse
+  // Any chevron click toggles all sections together
   container.querySelectorAll('.tf-section-hdr').forEach(hdr => {
     hdr.addEventListener('click', () => {
-      const key = hdr.dataset.section;
-      const saved = JSON.parse(localStorage.getItem('tf_sections') || '{}');
-      const nowOpen = !(sections[key]);
-      saved[key] = nowOpen;
-      sections[key] = nowOpen;
-      localStorage.setItem('tf_sections', JSON.stringify(saved));
-      hdr.querySelector('.tf-section-chevron').classList.toggle('open', nowOpen);
-      hdr.nextElementSibling.classList.toggle('collapsed', !nowOpen);
+      open = !open;
+      localStorage.setItem('tf_open', open);
+      container.querySelectorAll('.tf-section-chevron').forEach(c => c.classList.toggle('open', open));
+      container.querySelectorAll('.tf-section-body').forEach(b => b.classList.toggle('collapsed', !open));
     });
   });
 

@@ -7,7 +7,6 @@ let _scores = {};
 const GAME_LIST = [
   { id: 'snake',        title: 'Snake',          desc: 'Eat food, grow longer — avoid walls and yourself.' },
   { id: 'runner',       title: 'Runner',          desc: 'Endless dino-style runner. Jump over obstacles.' },
-  { id: 'pacman',       title: 'Pac-Man',         desc: 'Eat all dots, avoid ghosts. Power pellets help.' },
   { id: 'pong',         title: 'Pong',            desc: 'Classic paddle ball. First to 7 wins.' },
   { id: 'spaceinvaders',title: 'Space Invaders',  desc: 'Shoot the alien fleet before they reach you.' },
   { id: 'tetris',       title: 'Tetris',          desc: 'Stack falling blocks and clear lines.' },
@@ -142,7 +141,6 @@ async function openGame(gameId, content) {
     const starters = {
       snake:         startSnake,
       runner:        startRunner,
-      pacman:        startPacman,
       pong:          startPong,
       spaceinvaders: startSpaceInvaders,
       tetris:        startTetris,
