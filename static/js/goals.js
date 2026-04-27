@@ -1,8 +1,10 @@
 // ── Module state ─────────────────────────────────────────────
 let _goals = [];
+let _gStatusFilter = 'active';
 let _gTrackFilter = 'all';
 let _gAreaFilters = new Set();
 let _gSelectedId = null;
+let _gFullViewId = null;
 
 const GOAL_AREAS = ['Health','Fitness','Work','Finance','Personal','Learning','Home','Social','Creative'];
 
@@ -25,12 +27,14 @@ function _wireAreaPills(container) {
 
 // ── Entry point ───────────────────────────────────────────────
 registerPage('goals', async function(content) {
+  _gStatusFilter = 'active';
   _gTrackFilter = 'all';
   _gAreaFilters = new Set();
   _gSelectedId = null;
+  _gFullViewId = null;
 
   content.innerHTML = `
-    <div class="goals-shell">
+    <div class="goals-shell" id="goals-shell">
       <div class="goals-main" id="goals-main">
         <div class="page-header">
           <h1 class="page-title">Goals</h1>
@@ -39,30 +43,55 @@ registerPage('goals', async function(content) {
         <div id="goals-stats" class="stats-row" style="grid-template-columns:repeat(4,1fr)"></div>
         <div class="goals-filter-bar">
           <button class="btn btn-secondary btn-sm goals-filter-toggle" id="goals-filter-toggle">Filters</button>
-          <div id="goals-filter-panels" style="display:none">
-            <div class="filter-pills" id="goals-track-pills">
-              <button class="filter-pill active" data-track="all">All</button>
-              <button class="filter-pill" data-track="on-track">On track</button>
-              <button class="filter-pill" data-track="off-track">Off track</button>
+          <div id="goals-filter-panels" class="goals-filter-inset">
+            <div class="goals-filter-section">
+              <div class="goals-filter-label">Status</div>
+              <div class="filter-pills" id="goals-status-pills">
+                <button class="filter-pill active" data-status="active">Active</button>
+                <button class="filter-pill" data-status="achieved">Achieved</button>
+                <button class="filter-pill" data-status="abandoned">Abandoned</button>
+                <button class="filter-pill" data-status="all">All</button>
+              </div>
             </div>
-            <div class="filter-pills" id="goals-area-pills">
-              ${GOAL_AREAS.map(a =>
-                `<button class="filter-pill" data-area="${a}">${a}</button>`
-              ).join('')}
+            <div class="goals-filter-section">
+              <div class="goals-filter-label">Progress</div>
+              <div class="filter-pills" id="goals-track-pills">
+                <button class="filter-pill active" data-track="all">All</button>
+                <button class="filter-pill" data-track="on-track">On track</button>
+                <button class="filter-pill" data-track="off-track">Off track</button>
+              </div>
+            </div>
+            <div class="goals-filter-section">
+              <div class="goals-filter-label">Area</div>
+              <div class="filter-pills" id="goals-area-pills">
+                ${GOAL_AREAS.map(a =>
+                  `<button class="filter-pill" data-area="${a}">${a}</button>`
+                ).join('')}
+              </div>
             </div>
           </div>
         </div>
         <div id="goals-grid" class="goals-grid"></div>
       </div>
       <div class="goals-detail-pane" id="goals-detail-pane"></div>
+      <div id="g-full-view" style="display:none;flex:1;overflow-y:auto;min-width:0"></div>
     </div>`;
 
   document.getElementById('new-goal-btn').addEventListener('click', openNewGoalSidebar);
 
+  document.getElementById('goals-status-pills').addEventListener('click', e => {
+    const pill = e.target.closest('.filter-pill');
+    if (!pill) return;
+    _gStatusFilter = pill.dataset.status;
+    document.querySelectorAll('#goals-status-pills .filter-pill').forEach(p =>
+      p.classList.toggle('active', p === pill)
+    );
+    _updateGFilterBtn();
+    renderGGrid();
+  });
+
   document.getElementById('goals-filter-toggle').addEventListener('click', () => {
-    const panels = document.getElementById('goals-filter-panels');
-    const open = panels.style.display === 'none';
-    panels.style.display = open ? 'flex' : 'none';
+    document.getElementById('goals-filter-panels').classList.toggle('open');
   });
 
   document.getElementById('goals-track-pills').addEventListener('click', e => {
@@ -103,7 +132,7 @@ registerPage('goals', async function(content) {
 function _updateGFilterBtn() {
   const btn = document.getElementById('goals-filter-toggle');
   if (!btn) return;
-  const n = (_gTrackFilter !== 'all' ? 1 : 0) + _gAreaFilters.size;
+  const n = (_gStatusFilter !== 'active' ? 1 : 0) + (_gTrackFilter !== 'all' ? 1 : 0) + _gAreaFilters.size;
   btn.textContent = n > 0 ? `Filters (${n})` : 'Filters';
 }
 
@@ -124,6 +153,23 @@ function renderGAll() {
       if (g) renderGDetail(g); else closeGDetail();
     }
   }
+  if (_gFullViewId) {
+    const g = _goals.find(g => g.id === _gFullViewId);
+    if (g) renderGFullView(g); else closeGFullView();
+  }
+}
+
+async function doQuickStatusChange(goalId, newStatus, confirmMsg) {
+  if (!confirm(confirmMsg)) return;
+  try {
+    const updated = await apiFetch('PUT', `/goals/${goalId}`, { status: newStatus });
+    const idx = _goals.findIndex(g => g.id === goalId);
+    if (idx >= 0) _goals[idx] = updated;
+    renderGStats();
+    renderGGrid();
+    const pane = document.getElementById('goals-detail-pane');
+    if (pane?.classList.contains('open') && _gSelectedId === goalId) renderGDetail(updated);
+  } catch(e) { alert('Could not update goal: ' + e.message); }
 }
 
 function renderGStats() {
@@ -156,6 +202,12 @@ function renderGGrid() {
 
   let filtered = _goals;
 
+  // Status filter (primary)
+  if (_gStatusFilter !== 'all') {
+    filtered = filtered.filter(g => g.status === _gStatusFilter);
+  }
+
+  // Track filter (only meaningful for active goals)
   switch (_gTrackFilter) {
     case 'on-track':  filtered = filtered.filter(g => g.status === 'active' && g.is_on_track); break;
     case 'off-track': filtered = filtered.filter(g => g.status === 'active' && !g.is_on_track); break;
@@ -169,9 +221,16 @@ function renderGGrid() {
   }
 
   if (!filtered.length) {
+    const emptyMsgs = {
+      active:    ['No active goals', 'Create a goal to start tracking your progress.'],
+      achieved:  ['No achieved goals yet', 'Goals you mark as achieved will appear here.'],
+      abandoned: ['No abandoned goals', 'Goals you abandon will appear here.'],
+      all:       ['No goals yet', 'Create a goal to start tracking your progress.'],
+    };
+    const [title, text] = emptyMsgs[_gStatusFilter] || emptyMsgs.all;
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;padding:48px 0">
-      <div class="empty-state-title">No goals here</div>
-      <p class="empty-state-text">Create a goal to start tracking your progress.</p>
+      <div class="empty-state-title">${title}</div>
+      <p class="empty-state-text">${text}</p>
     </div>`;
     return;
   }
@@ -194,6 +253,20 @@ function renderGGrid() {
       const idx = _goals.findIndex(g => g.id === gid);
       if (idx >= 0) _goals[idx] = updated;
       renderGGrid();
+    });
+  });
+
+  grid.querySelectorAll('.goal-action-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const gid   = parseInt(btn.dataset.id);
+      const newSt = btn.dataset.newStatus;
+      const msgs  = {
+        achieved:  'Mark this goal as achieved?',
+        abandoned: 'Mark this goal as abandoned?',
+        active:    'Reactivate this goal?',
+      };
+      doQuickStatusChange(gid, newSt, msgs[newSt] || 'Change goal status?');
     });
   });
 }
@@ -331,6 +404,19 @@ function goalCardHTML(g) {
   const areaBadges = (g.area || '').split(',').map(a => a.trim()).filter(Boolean)
     .map(a => `<span class="tag-badge tag-gray" style="font-size:12px">${escHtml(a)}</span>`).join('');
 
+  let actionsHtml = '';
+  if (g.status === 'active') {
+    actionsHtml = `<div class="goal-card-actions">
+      <button class="goal-action-btn goal-action-achieve" data-id="${g.id}" data-new-status="achieved">&#10003; Achieve</button>
+      <button class="goal-action-btn goal-action-abandon" data-id="${g.id}" data-new-status="abandoned">&#215; Abandon</button>
+    </div>`;
+  } else {
+    actionsHtml = `<div class="goal-card-actions">
+      <span class="goal-status-badge goal-status-${g.status}">${capitalize(g.status)}</span>
+      <button class="goal-action-btn goal-action-reactivate" data-id="${g.id}" data-new-status="active">&#8635; Reactivate</button>
+    </div>`;
+  }
+
   return `
     <div class="goal-card${isDone ? ' goal-card-done' : ''}${_gSelectedId === g.id ? ' selected' : ''}" data-id="${g.id}">
       <div class="goal-card-top">
@@ -351,6 +437,7 @@ function goalCardHTML(g) {
       ${typeSection}
       ${tasksSection}
       ${footer}
+      ${actionsHtml}
     </div>`;
 }
 
@@ -385,6 +472,7 @@ function renderGDetail(g) {
     <div class="detail-panel">
       <div class="detail-header">
         <textarea class="detail-title-input" id="d-g-title" rows="1">${escHtml(g.title)}</textarea>
+        <button class="btn btn-secondary btn-sm" id="d-g-expand" title="Open full view" style="padding:4px 7px;font-size:14px;line-height:1">⤢</button>
         <button class="detail-close-btn" id="d-g-close">×</button>
       </div>
       <div class="detail-body">
@@ -442,26 +530,33 @@ function renderGDetail(g) {
         ${_goalDetailSectionsHTML(g)}
 
         <div class="divider"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="detail-section-title" style="margin-bottom:0">Tasks</div>
+          ${g.status === 'active' ? `<button class="btn btn-secondary btn-sm" id="d-g-add-task" style="font-size:12px">+ New task</button>` : ''}
+        </div>
+        <div id="d-g-tasks-list">
+          ${(g.pending_tasks || []).map(t => `
+            <div style="font-size:13px;padding:4px 0;border-bottom:var(--border-subtle);color:var(--text-secondary);display:flex;justify-content:space-between">
+              <span>${escHtml(t.title)}</span>
+              ${t.due_date ? `<span style="color:var(--text-muted);font-size:12px">${formatDateShort(t.due_date)}</span>` : ''}
+            </div>`).join('')}
+          ${(g.recent_tasks || []).map(t => `
+            <div style="font-size:13px;padding:4px 0;border-bottom:var(--border-subtle);color:var(--text-muted)">
+              ✓ <span style="text-decoration:line-through">${escHtml(t.title)}</span>
+              <span style="float:right;font-size:12px">${t.completed_at ? formatDateShort(t.completed_at.slice(0,10)) : ''}</span>
+            </div>`).join('')}
+          ${!(g.pending_tasks?.length || g.recent_tasks?.length) ? `<div style="font-size:13px;color:var(--text-muted);padding:4px 0">No tasks yet</div>` : ''}
+        </div>
+
+        <div class="divider"></div>
         <div class="detail-section-title">History</div>
         <div class="goal-log-history" id="d-g-log-history"></div>
-
-        ${g.recent_tasks?.length ? `
-          <div class="divider"></div>
-          <div class="detail-section-title">Related tasks</div>
-          <div>
-            ${g.recent_tasks.map(t => `
-              <div style="font-size:13px;padding:4px 0;border-bottom:var(--border-subtle);color:var(--text-secondary)">
-                ✓ ${escHtml(t.title)}
-                <span style="color:var(--text-muted);float:right">${t.completed_at ? formatDateShort(t.completed_at.slice(0,10)) : ''}</span>
-              </div>`).join('')}
-          </div>` : ''}
       </div>
       <div class="detail-footer">
         <button class="btn btn-danger btn-sm" id="d-g-delete">Delete</button>
         <div style="display:flex;gap:8px">
           ${g.status === 'active' && (g.metrics || []).some(m => m.target_value != null)
             ? `<button class="btn btn-success btn-sm" id="d-g-complete">✓ Complete</button>` : ''}
-          <button class="btn btn-secondary btn-sm" id="d-g-add-task">+ Task</button>
           <button class="btn btn-primary btn-sm" id="d-g-save">Save</button>
         </div>
       </div>
@@ -487,6 +582,7 @@ function renderGDetail(g) {
   autoResizeTextarea(pane.querySelector('#d-g-title'));
   pane.querySelector('#d-g-title').addEventListener('input', e => autoResizeTextarea(e.target));
   pane.querySelector('#d-g-close').addEventListener('click', closeGDetail);
+  pane.querySelector('#d-g-expand').addEventListener('click', () => openGFullView(g.id));
   pane.querySelector('#d-g-save').addEventListener('click', () => saveGDetail(g.id));
   pane.querySelector('#d-g-delete').addEventListener('click', () => {
     if (confirm(`Delete "${g.title}"?`)) doDeleteGoal(g.id);
@@ -691,7 +787,7 @@ function renderGMilestones(milestones, goalId, metrics) {
       if (!form) return;
       const title = form.querySelector('.ms-edit-title').value.trim();
       if (!title) { alert('Title is required.'); return; }
-      const targetDate = form.querySelector('.ms-edit-date').value || null;
+      const targetDate = getDateVal(form.querySelector('.ms-edit-date'));
       const payload = { title };
       if (targetDate) payload.target_date = targetDate;
       else payload.clear_target_date = true;
@@ -839,9 +935,7 @@ function renderGHabits(habits, goalId) {
       try {
         const updated = await apiFetch('PUT', `/goals/${goalId}/habits/${hid}`, payload);
         _updateGoal(updated);
-        renderGStats(); renderGGrid();
-        const pane = document.getElementById('goals-detail-pane');
-        if (pane?.classList.contains('open')) renderGDetail(updated);
+        renderGAll();
       } catch(e) { alert('Error: ' + e.message); }
     });
   });
@@ -855,9 +949,7 @@ function renderGHabits(habits, goalId) {
         await apiFetch('DELETE', `/goals/${goalId}/habits/${hid}`);
         const updated = await apiFetch('GET', `/goals/${goalId}`);
         _updateGoal(updated);
-        renderGStats(); renderGGrid();
-        const pane = document.getElementById('goals-detail-pane');
-        if (pane?.classList.contains('open')) renderGDetail(updated);
+        renderGAll();
       } catch(e) { alert('Error: ' + e.message); }
     });
   });
@@ -870,7 +962,7 @@ function renderGHabits(habits, goalId) {
       if (!logSection) return;
       const valueHrs = parseFloat(logSection.querySelector('.hf-log-value').value);
       const note  = logSection.querySelector('.hf-log-note').value.trim() || null;
-      const logDate = logSection.querySelector('.hf-log-date').value || null;
+      const logDate = getDateVal(logSection.querySelector('.hf-log-date'));
       if (isNaN(valueHrs) && !note) { alert('Enter a value to log.'); return; }
       try {
         const updated = await apiFetch('POST', `/goals/${goalId}/log`, {
@@ -882,9 +974,7 @@ function renderGHabits(habits, goalId) {
         logSection.querySelector('.hf-log-value').value = '';
         logSection.querySelector('.hf-log-note').value  = '';
         _updateGoal(updated);
-        renderGStats(); renderGGrid();
-        const pane = document.getElementById('goals-detail-pane');
-        if (pane?.classList.contains('open')) renderGDetail(updated);
+        renderGAll();
       } catch(e) { alert('Error: ' + e.message); }
     });
   });
@@ -897,9 +987,7 @@ function renderGHabits(habits, goalId) {
         await apiFetch('DELETE', `/goals/${goalId}/log/${entryId}`);
         const updated = await apiFetch('GET', `/goals/${goalId}`);
         _updateGoal(updated);
-        renderGStats(); renderGGrid();
-        const pane = document.getElementById('goals-detail-pane');
-        if (pane?.classList.contains('open')) renderGDetail(updated);
+        renderGAll();
       } catch(e) { alert('Error: ' + e.message); }
     });
   });
@@ -1129,7 +1217,7 @@ function renderGMetrics(metrics, goalId, milestones) {
       const unit    = form.querySelector('.me-unit').value.trim();
       const msSel   = form.querySelector('.me-milestone');
       const msId    = msSel?.value ? parseInt(msSel.value) : null;
-      const dateVal = form.querySelector('.me-date')?.value || null;
+      const dateVal = getDateVal(form.querySelector('.me-date'));
       if (label)           payload.label         = label;
       if (!isNaN(start))   payload.start_value   = start;
       if (!isNaN(target))  payload.target_value  = target;
@@ -1142,10 +1230,7 @@ function renderGMetrics(metrics, goalId, milestones) {
       try {
         const updated = await apiFetch('PUT', `/goals/${goalId}/metrics/${mid}`, payload);
         _updateGoal(updated);
-        renderGStats();
-        renderGGrid();
-        const pane = document.getElementById('goals-detail-pane');
-        if (pane?.classList.contains('open')) renderGDetail(updated);
+        renderGAll();
       } catch(e) { alert('Error: ' + e.message); }
     });
   });
@@ -1169,10 +1254,7 @@ function renderGMetrics(metrics, goalId, milestones) {
       try {
         const updated = await apiFetch('PUT', `/goals/${goalId}/metrics/${mid}`, payload);
         _updateGoal(updated);
-        renderGStats();
-        renderGGrid();
-        const pane = document.getElementById('goals-detail-pane');
-        if (pane?.classList.contains('open')) renderGDetail(updated);
+        renderGAll();
       } catch(e) { alert('Error: ' + e.message); }
     });
   });
@@ -1191,7 +1273,7 @@ async function doAddMetric(goalId) {
   const target = parseFloat(targetEl?.value);
   const unit   = unitEl?.value.trim() || null;
   const msId   = milestoneEl?.value ? parseInt(milestoneEl.value) : null;
-  const dateVal = dateEl?.value || null;
+  const dateVal = getDateVal(dateEl);
 
   const payload = { label, unit };
   if (!isNaN(start))  payload.start_value  = start;
@@ -1222,10 +1304,9 @@ async function doDeleteMetric(goalId, metricId) {
 }
 
 async function doAddHabit(goalId) {
-  const pane = document.getElementById('goals-detail-pane');
-  const label  = pane?.querySelector('#d-g-h-label')?.value.trim() || 'Habit';
-  const wmHrs  = parseFloat(pane?.querySelector('#d-g-h-weekly-min')?.value);
-  const md     = parseInt(pane?.querySelector('#d-g-h-min-days')?.value);
+  const label  = document.getElementById('d-g-h-label')?.value.trim() || 'Habit';
+  const wmHrs  = parseFloat(document.getElementById('d-g-h-weekly-min')?.value);
+  const md     = parseInt(document.getElementById('d-g-h-min-days')?.value);
 
   const payload = { label };
   if (!isNaN(wmHrs)) payload.weekly_target_minutes = Math.round(wmHrs * 60);
@@ -1233,14 +1314,14 @@ async function doAddHabit(goalId) {
 
   try {
     const updated = await apiFetch('POST', `/goals/${goalId}/habits`, payload);
-    if (pane) {
-      pane.querySelector('#d-g-h-label').value = '';
-      pane.querySelector('#d-g-h-weekly-min').value = '';
-      pane.querySelector('#d-g-h-min-days').value = '';
-    }
+    const lEl = document.getElementById('d-g-h-label');
+    const wEl = document.getElementById('d-g-h-weekly-min');
+    const dEl = document.getElementById('d-g-h-min-days');
+    if (lEl) lEl.value = '';
+    if (wEl) wEl.value = '';
+    if (dEl) dEl.value = '';
     _updateGoal(updated);
-    renderGStats(); renderGGrid();
-    if (pane?.classList.contains('open')) renderGDetail(updated);
+    renderGAll();
   } catch(e) { alert('Error: ' + e.message); }
 }
 
@@ -1249,15 +1330,17 @@ async function saveGDetail(goalId) {
   const g = _goals.find(g => g.id === goalId);
   if (!g) return;
 
-  const pane = document.getElementById('goals-detail-pane');
+  const areaContainer = _gFullViewId
+    ? document.getElementById('g-full-view')
+    : document.getElementById('goals-detail-pane');
   const body = {
     title:       document.getElementById('d-g-title')?.value.trim() || g.title,
     description: document.getElementById('d-g-description')?.value || null,
-    area:        _getSelectedAreas(pane),
+    area:        _getSelectedAreas(areaContainer),
     status:      document.getElementById('d-g-status')?.value,
   };
 
-  const targetDate = document.getElementById('d-g-target-date')?.value;
+  const targetDate = getDateVal(document.getElementById('d-g-target-date'));
   if (targetDate) body.target_date = targetDate;
   else body.clear_target_date = true;
 
@@ -1292,7 +1375,7 @@ async function logGProgress(goalId) {
   const dateEl  = document.getElementById('d-g-log-date');
   const value   = parseFloat(valueEl?.value);
   const note    = noteEl?.value.trim() || null;
-  const logDate = dateEl?.value || null;
+  const logDate = getDateVal(dateEl);
 
   if (isNaN(value) && !note) { alert('Enter a value to log.'); return; }
 
@@ -1321,7 +1404,7 @@ async function doAddMilestone(goalId) {
   try {
     const updated = await apiFetch('POST', `/goals/${goalId}/milestones`, {
       title,
-      target_date: dateEl?.value || null,
+      target_date: getDateVal(dateEl),
       sort_order: sortOrder,
     });
     if (titleEl) titleEl.value = '';
@@ -1366,6 +1449,7 @@ async function doDeleteGoal(goalId) {
     await apiFetch('DELETE', `/goals/${goalId}`);
     _goals = _goals.filter(g => g.id !== goalId);
     closeGDetail();
+    closeGFullView();
     renderGAll();
   } catch(e) { alert('Error: ' + e.message); }
 }
@@ -1506,7 +1590,7 @@ function openNewGoalSidebar() {
       title,
       description: pane.querySelector('#ng-description').value || null,
       area:        _getSelectedAreas(pane),
-      target_date: pane.querySelector('#ng-target-date').value || null,
+      target_date: getDateVal(pane.querySelector('#ng-target-date')),
     };
 
     try {
@@ -1540,7 +1624,7 @@ function openNewGoalSidebar() {
       const msRows = pane.querySelectorAll('.ng-ms-row');
       for (let i = 0; i < msRows.length; i++) {
         const msTitle = msRows[i].querySelector('.ng-ms-title').value.trim();
-        const msDate  = msRows[i].querySelector('.ng-ms-date').value || null;
+        const msDate  = getDateVal(msRows[i].querySelector('.ng-ms-date'));
         if (msTitle) {
           await apiFetch('POST', `/goals/${created.id}/milestones`, {
             title: msTitle, target_date: msDate, sort_order: i,
@@ -1590,14 +1674,14 @@ function openQuickTaskForGoal(goalId, goalTitle) {
     </div>`;
 
   const modal = createModal('New task', body, async (overlay) => {
-    const title = document.getElementById('qt-title').value.trim();
+    const title = overlay.querySelector('#qt-title').value.trim();
     if (!title) { alert('Title is required.'); return; }
     try {
       await apiFetch('POST', '/tasks', {
         title,
-        priority:  document.getElementById('qt-priority').value,
-        due_date:  document.getElementById('qt-due').value || null,
-        notes:     document.getElementById('qt-notes').value || null,
+        priority:  overlay.querySelector('#qt-priority').value,
+        due_date:  getDateVal(overlay.querySelector('#qt-due')),
+        notes:     overlay.querySelector('#qt-notes').value || null,
         goal_id:   goalId,
         tag_ids:   [],
       });
@@ -1611,4 +1695,284 @@ function openQuickTaskForGoal(goalId, goalTitle) {
   }, 'Add task');
 
   openModal(modal);
+}
+
+// ── Goal full-screen view ─────────────────────────────────────
+function openGFullView(goalId) {
+  _gFullViewId = goalId;
+  // Close sidebar
+  const pane = document.getElementById('goals-detail-pane');
+  if (pane) { pane.classList.remove('open'); pane.innerHTML = ''; }
+  // Hide goals grid; full view lives inside goals-shell as a flex sibling
+  const main = document.getElementById('goals-main');
+  if (main) main.style.display = 'none';
+  const fv = document.getElementById('g-full-view');
+  if (fv) fv.style.display = 'block';
+  const g = _goals.find(g => g.id === goalId);
+  if (g) renderGFullView(g);
+}
+
+function closeGFullView() {
+  if (!_gFullViewId) return;
+  _gFullViewId = null;
+  const fv = document.getElementById('g-full-view');
+  if (fv) { fv.style.display = 'none'; fv.innerHTML = ''; }
+  const main = document.getElementById('goals-main');
+  if (main) main.style.display = '';
+}
+
+function renderGFullView(g) {
+  const fv = document.getElementById('g-full-view');
+  if (!fv) return;
+
+  const isDone = g.status !== 'active';
+  const onTrackKey = isDone ? 'neutral' : (g.is_on_track ? 'on-track' : 'off-track');
+  const onTrackLabel = isDone ? capitalize(g.status) : (g.is_on_track ? 'On track' : 'Off track');
+  const pct = Math.round(g.progress_pct || 0);
+
+  const totalMs = (g.milestones || []).length;
+  const doneMs  = (g.milestones || []).filter(m => m.completed).length;
+  const pendingTaskCount = (g.pending_tasks || []).length;
+  const daysLeft = g.target_date ? Math.ceil(
+    (new Date(g.target_date + 'T00:00:00') - new Date(todayISO() + 'T00:00:00')) / 86400000
+  ) : null;
+
+  const kpiDaysHTML = daysLeft !== null ? `
+    <div class="g-kpi-card${daysLeft < 0 ? ' g-kpi-danger' : daysLeft <= 7 ? ' g-kpi-warning' : ''}">
+      <div class="g-kpi-value">${daysLeft < 0 ? Math.abs(daysLeft) + 'd' : daysLeft === 0 ? '0d' : daysLeft + 'd'}</div>
+      <div class="g-kpi-label">${daysLeft < 0 ? 'Overdue' : 'Until target'}</div>
+    </div>` : '';
+
+  fv.innerHTML = `
+    <div class="g-full-inner">
+      <div class="g-full-header">
+        <button class="btn btn-secondary btn-sm" id="g-fv-back" style="flex-shrink:0">← Back</button>
+        <div style="flex:1;min-width:0">
+          <textarea class="detail-title-input" id="d-g-title" rows="1" style="font-size:20px;font-weight:700">${escHtml(g.title)}</textarea>
+          <div class="goal-card-badges" style="margin-top:4px">
+            <span class="goal-type-badge">${capitalize(g.goal_type)}</span>
+            <span class="goal-on-track-dot ${onTrackKey}" title="${onTrackLabel}" style="display:inline-block;vertical-align:middle;margin-left:6px"></span>
+            <span style="font-size:13px;color:var(--text-muted);margin-left:4px">${onTrackLabel}</span>
+            ${(g.area || '').split(',').map(a => a.trim()).filter(Boolean).map(a =>
+              `<span class="tag-badge tag-gray" style="font-size:12px">${escHtml(a)}</span>`).join('')}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0;align-items:flex-start">
+          ${g.status === 'active' && (g.metrics || []).some(m => m.target_value != null)
+            ? `<button class="btn btn-success btn-sm" id="d-g-complete">✓ Complete</button>` : ''}
+          <button class="btn btn-danger btn-sm" id="d-g-delete">Delete</button>
+          <button class="btn btn-primary btn-sm" id="d-g-save">Save</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px">
+        <div class="goal-progress-bar" style="height:8px">
+          <div class="goal-progress-fill ${onTrackKey}" style="width:${pct}%"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-top:4px">
+          <span>${onTrackLabel}</span><span>${pct}% complete</span>
+        </div>
+      </div>
+
+      <div class="g-kpi-row">
+        <div class="g-kpi-card">
+          <div class="g-kpi-value">${pct}%</div>
+          <div class="g-kpi-label">Progress</div>
+        </div>
+        ${g.current_streak > 0 ? `<div class="g-kpi-card">
+          <div class="g-kpi-value">🔥 ${g.current_streak}</div>
+          <div class="g-kpi-label">Streak${g.best_streak > g.current_streak ? ` · best ${g.best_streak}` : ''}</div>
+        </div>` : ''}
+        ${totalMs > 0 ? `<div class="g-kpi-card">
+          <div class="g-kpi-value">${doneMs}/${totalMs}</div>
+          <div class="g-kpi-label">Milestones</div>
+        </div>` : ''}
+        <div class="g-kpi-card">
+          <div class="g-kpi-value">${pendingTaskCount}</div>
+          <div class="g-kpi-label">Pending tasks</div>
+        </div>
+        ${kpiDaysHTML}
+      </div>
+
+      <div class="g-full-body">
+        <div class="g-full-col">
+
+          <div class="g-section-card">
+            <div class="g-section-card-title">General information</div>
+            <div class="detail-grid" style="margin-bottom:12px">
+              <div class="detail-field">
+                <div class="detail-field-label">Status</div>
+                <select id="d-g-status">
+                  <option value="active"${g.status === 'active' ? ' selected' : ''}>Active</option>
+                  <option value="completed"${g.status === 'completed' ? ' selected' : ''}>Completed</option>
+                  <option value="abandoned"${g.status === 'abandoned' ? ' selected' : ''}>Abandoned</option>
+                </select>
+              </div>
+              <div class="detail-field">
+                <div class="detail-field-label">Target date</div>
+                <input type="date" id="d-g-target-date" value="${g.target_date || ''}">
+              </div>
+              <div class="detail-field" style="grid-column:1/-1">
+                <div class="detail-field-label">Area</div>
+                ${_areaPickerHTML(g.area)}
+              </div>
+            </div>
+            <div class="detail-field-label">Description</div>
+            <textarea class="detail-notes" id="d-g-description" placeholder="Describe your goal…">${escHtml(g.description || '')}</textarea>
+            ${(g.notes || []).length ? `
+              <div class="detail-field-label" style="margin-top:12px">Linked notes</div>
+              <div id="d-g-linked-notes">
+                ${g.notes.map(n => `
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:var(--border-subtle)">
+                    <span style="font-size:13px;color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(n.title)}</span>
+                    <button class="btn btn-secondary btn-sm" data-note-id="${n.id}" style="padding:2px 8px;font-size:12px;flex-shrink:0;margin-left:8px">Open →</button>
+                  </div>`).join('')}
+              </div>` : ''}
+          </div>
+
+          <div class="g-section-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <div class="g-section-card-title" style="margin-bottom:0">Milestones</div>
+              <button class="btn btn-secondary btn-sm" id="d-g-ms-toggle">+ Add milestone</button>
+            </div>
+            <div class="goal-milestone-list" id="d-g-milestones"></div>
+            <div id="d-g-ms-add-form" style="display:none;padding:10px;background:var(--bg-hover);border-radius:var(--radius-el);margin-top:8px">
+              <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+                <input class="form-input" id="d-g-ms-title" placeholder="Milestone title…" style="flex:2;min-width:140px;font-size:13px">
+                <input type="date" id="d-g-ms-date" style="flex:1;min-width:110px;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none">
+              </div>
+              <button class="btn btn-primary btn-sm" id="d-g-ms-add">Add milestone</button>
+            </div>
+          </div>
+
+          <div class="g-section-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <div class="g-section-card-title" style="margin-bottom:0">Tasks</div>
+              ${g.status === 'active' ? `<button class="btn btn-secondary btn-sm" id="d-g-add-task">+ New task</button>` : ''}
+            </div>
+            <div id="d-g-tasks-list">
+              ${(g.pending_tasks || []).map(t => `
+                <div style="font-size:13px;padding:4px 0;border-bottom:var(--border-subtle);color:var(--text-secondary);display:flex;justify-content:space-between">
+                  <span>${escHtml(t.title)}</span>
+                  ${t.due_date ? `<span style="color:var(--text-muted);font-size:12px">${formatDateShort(t.due_date)}</span>` : ''}
+                </div>`).join('')}
+              ${(g.recent_tasks || []).map(t => `
+                <div style="font-size:13px;padding:4px 0;border-bottom:var(--border-subtle);color:var(--text-muted)">
+                  ✓ <span style="text-decoration:line-through">${escHtml(t.title)}</span>
+                  <span style="float:right;font-size:12px">${t.completed_at ? formatDateShort(t.completed_at.slice(0,10)) : ''}</span>
+                </div>`).join('')}
+              ${!(g.pending_tasks?.length || g.recent_tasks?.length) ? `<div style="font-size:13px;color:var(--text-muted);padding:4px 0">No tasks yet</div>` : ''}
+            </div>
+          </div>
+
+        </div>
+        <div class="g-full-col">
+
+          <div class="g-section-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <div class="g-section-card-title" style="margin-bottom:0">Habits</div>
+              <button class="btn btn-secondary btn-sm" id="d-g-h-toggle">+ Add habit</button>
+            </div>
+            <div class="goal-habits-list" id="d-g-habits"></div>
+            <div id="d-g-h-add-form" style="display:none;padding:10px;background:var(--bg-hover);border-radius:var(--radius-el);margin-top:8px">
+              <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:8px">
+                <input class="form-input" id="d-g-h-label" placeholder="Label (e.g. Running)" style="font-size:13px">
+                <input class="form-input" type="number" step="0.25" id="d-g-h-weekly-min" placeholder="Hrs/week" style="font-size:13px">
+                <input class="form-input" type="number" id="d-g-h-min-days" placeholder="Days/week" min="1" max="7" style="font-size:13px">
+              </div>
+              <button class="btn btn-primary btn-sm" id="d-g-h-add">Add habit</button>
+            </div>
+          </div>
+
+          <div class="g-section-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <div class="g-section-card-title" style="margin-bottom:0">Numeric targets</div>
+              <button class="btn btn-secondary btn-sm" id="d-g-m-toggle">+ Add target</button>
+            </div>
+            <div class="goal-metrics-list" id="d-g-metrics"></div>
+            <div id="d-g-m-add-form" style="display:none;padding:10px;background:var(--bg-hover);border-radius:var(--radius-el);margin-top:8px">
+              <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px">
+                <input class="form-input" id="d-g-m-label" placeholder="Label" style="font-size:13px">
+                <input class="form-input" type="number" id="d-g-m-start" placeholder="Start" style="font-size:13px">
+                <input class="form-input" type="number" id="d-g-m-target" placeholder="Target" style="font-size:13px">
+                <input class="form-input" id="d-g-m-unit" placeholder="Unit" style="font-size:13px">
+              </div>
+              <div style="margin-bottom:8px">
+                <input type="date" id="d-g-m-date" style="width:100%;font-size:13px;padding:5px 8px;border:var(--border-subtle);border-radius:var(--radius-el);background:var(--bg-input);outline:none">
+              </div>
+              ${(g.milestones || []).length ? `<div style="margin-bottom:8px">
+                <select id="d-g-m-milestone" class="form-input" style="width:100%;font-size:13px">
+                  <option value="">Link to milestone (optional)</option>
+                  ${(g.milestones || []).filter(ms => !ms.completed).map(ms => `<option value="${ms.id}">${escHtml(ms.title)}</option>`).join('')}
+                </select>
+              </div>` : ''}
+              <button class="btn btn-primary btn-sm" id="d-g-m-add">Add target</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="g-section-card">
+        <div class="g-section-card-title">History</div>
+        <div class="goal-log-history" id="d-g-log-history"></div>
+      </div>
+    </div>`;
+
+  _wireAreaPills(fv);
+  autoResizeTextarea(fv.querySelector('#d-g-title'));
+  fv.querySelector('#d-g-title').addEventListener('input', e => autoResizeTextarea(e.target));
+
+  fv.querySelector('#g-fv-back').addEventListener('click', closeGFullView);
+  fv.querySelector('#d-g-save').addEventListener('click', () => saveGDetail(g.id));
+  fv.querySelector('#d-g-delete').addEventListener('click', () => {
+    if (confirm(`Delete "${g.title}"?`)) doDeleteGoal(g.id);
+  });
+  fv.querySelector('#d-g-complete')?.addEventListener('click', () => doCompleteGoal(g.id));
+  fv.querySelector('#d-g-add-task')?.addEventListener('click', () => openQuickTaskForGoal(g.id, g.title));
+
+  fv.querySelectorAll('#d-g-linked-notes [data-note-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      window._openNoteId = parseInt(btn.dataset.noteId);
+      loadPage('notes');
+    });
+  });
+
+  fv.querySelector('#d-g-h-toggle')?.addEventListener('click', () => {
+    const form = fv.querySelector('#d-g-h-add-form');
+    const btn  = fv.querySelector('#d-g-h-toggle');
+    const open = form.style.display === 'none';
+    form.style.display = open ? 'block' : 'none';
+    btn.textContent = open ? '− Add habit' : '+ Add habit';
+    if (open) fv.querySelector('#d-g-h-label')?.focus();
+  });
+  fv.querySelector('#d-g-h-add')?.addEventListener('click', () => doAddHabit(g.id));
+
+  fv.querySelector('#d-g-m-toggle')?.addEventListener('click', () => {
+    const form = fv.querySelector('#d-g-m-add-form');
+    const btn  = fv.querySelector('#d-g-m-toggle');
+    const open = form.style.display === 'none';
+    form.style.display = open ? 'block' : 'none';
+    btn.textContent = open ? '− Add target' : '+ Add target';
+    if (open) fv.querySelector('#d-g-m-label')?.focus();
+  });
+  fv.querySelector('#d-g-m-add')?.addEventListener('click', () => doAddMetric(g.id));
+
+  fv.querySelector('#d-g-ms-toggle')?.addEventListener('click', () => {
+    const form = fv.querySelector('#d-g-ms-add-form');
+    const btn  = fv.querySelector('#d-g-ms-toggle');
+    const open = form.style.display === 'none';
+    form.style.display = open ? 'block' : 'none';
+    btn.textContent = open ? '− Add milestone' : '+ Add milestone';
+    if (open) fv.querySelector('#d-g-ms-title')?.focus();
+  });
+  fv.querySelector('#d-g-ms-add')?.addEventListener('click', () => doAddMilestone(g.id));
+  fv.querySelector('#d-g-ms-title')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); doAddMilestone(g.id); }
+  });
+
+  renderGLogHistory(g);
+  renderGHabits(g.habits || [], g.id);
+  renderGMetrics(g.metrics || [], g.id, g.milestones || []);
+  renderGMilestones(g.milestones || [], g.id, g.metrics || []);
 }

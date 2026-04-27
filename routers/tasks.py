@@ -154,22 +154,26 @@ def create_task(body: TaskCreate):
     if body.make_recurring and body.recurrence_cadence:
         result = conn.execute(
             """INSERT INTO task_recurrences
-               (title, notes, priority, goal_id, cadence, interval_value, days_of_week, day_of_month, tag_ids)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+               (title, notes, priority, goal_id, cadence, interval_value, days_of_week, day_of_month, tag_ids, end_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (
                 body.title, body.notes, body.priority, body.goal_id,
                 body.recurrence_cadence, body.recurrence_interval,
                 json.dumps(body.recurrence_days_of_week or []),
                 body.recurrence_day_of_month,
                 json.dumps(body.tag_ids),
+                body.recurrence_end_date,
             )
         ).fetchone()
         recurrence_id = result[0]
 
+    # Recurring seed task must have a due_date so future generation's duplicate check works
+    initial_due = body.due_date or (date.today().isoformat() if recurrence_id else None)
+
     result = conn.execute(
         """INSERT INTO tasks (title, notes, priority, goal_id, note_id, due_date, is_recurring, recurrence_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
-        (body.title, body.notes, body.priority, body.goal_id, body.note_id, body.due_date,
+        (body.title, body.notes, body.priority, body.goal_id, body.note_id, initial_due,
          1 if recurrence_id else 0, recurrence_id)
     ).fetchone()
     task_id = result[0]
@@ -204,7 +208,10 @@ def update_task(task_id: int, body: TaskUpdate):
     fields = {}
     if body.title is not None:    fields['title'] = body.title
     if body.notes is not None:    fields['notes'] = body.notes
-    if body.status is not None:   fields['status'] = body.status
+    if body.status is not None:
+        fields['status'] = body.status
+        if body.status == 'pending':
+            fields['completed_at'] = None
     if body.priority is not None: fields['priority'] = body.priority
     if body.clear_goal_id:
         fields['goal_id'] = None
@@ -223,9 +230,17 @@ def update_task(task_id: int, body: TaskUpdate):
         )
 
     if body.tag_ids is not None:
+        # Preserve system tags (e.g. trip auto-tags) so they survive edits from the main task UI
+        system_tag_ids = [
+            r['tag_id'] for r in conn.execute(
+                "SELECT tt.tag_id FROM task_tags tt JOIN tags t ON t.id = tt.tag_id "
+                "WHERE tt.task_id = ? AND t.is_system = 1",
+                (task_id,)
+            ).fetchall()
+        ]
         conn.execute("DELETE FROM task_tags WHERE task_id = ?", (task_id,))
-        for tag_id in body.tag_ids:
-            conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)", (task_id, tag_id))
+        for tid in set(body.tag_ids + system_tag_ids):
+            conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)", (task_id, tid))
 
     conn.commit()
     task = _task_full(conn, task_id)
@@ -267,6 +282,10 @@ def complete_task(task_id: int):
     conn.commit()
     task = _task_full(conn, task_id)
     conn.close()
+
+    if row['recurrence_id']:
+        business.generate_recurring_tasks()
+
     return task
 
 

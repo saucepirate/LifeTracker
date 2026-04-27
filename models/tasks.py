@@ -15,6 +15,7 @@ class TaskCreate(BaseModel):
     recurrence_interval: int = 1
     recurrence_days_of_week: Optional[List[int]] = None
     recurrence_day_of_month: Optional[int] = None
+    recurrence_end_date: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
@@ -50,6 +51,7 @@ class RecurrenceCreate(BaseModel):
     days_of_week: Optional[List[int]] = None
     day_of_month: Optional[int] = None
     tag_ids: List[int] = []
+    end_date: Optional[str] = None
 
 
 class RecurrenceUpdate(BaseModel):
@@ -63,3 +65,4 @@ class RecurrenceUpdate(BaseModel):
     day_of_month: Optional[int] = None
     tag_ids: Optional[List[int]] = None
     active: Optional[int] = None
+    end_date: Optional[str] = None

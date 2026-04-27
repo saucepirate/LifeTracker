@@ -142,6 +142,34 @@ def _get_range_data(conn, start: str, end: str):
             days[d] = {'events': [], 'tasks': [], 'milestones': [], 'metrics': []}
         days[d]['metrics'].append(m)
 
+    # Timed itinerary entries (read-only blocks during trip date range)
+    _trip_colors = {
+        'blue': '#4A90D9', 'teal': '#2BAE8E', 'amber': '#E8A624',
+        'purple': '#8B5CF6', 'coral': '#E8614A', 'green': '#4CAF50',
+        'pink': '#E879A4', 'gray': '#8A8A8A',
+    }
+    itin_rows = conn.execute(
+        """SELECT ie.id, ie.trip_id, ie.entry_date, ie.entry_type, ie.title,
+                  ie.start_time, ie.end_time, ie.location,
+                  t.name as trip_name, t.color as trip_color_name
+           FROM itinerary_entries ie
+           JOIN trips t ON t.id = ie.trip_id
+           WHERE ie.start_time IS NOT NULL
+             AND ie.entry_date >= ? AND ie.entry_date <= ?
+           ORDER BY ie.start_time ASC""",
+        (start, end)
+    ).fetchall()
+
+    for row in itin_rows:
+        r = dict(row)
+        r['trip_color'] = _trip_colors.get(r.pop('trip_color_name', ''), '#4A90D9')
+        d = r['entry_date']
+        if d not in days:
+            days[d] = {'events': [], 'tasks': [], 'milestones': [], 'metrics': [], 'itinerary': []}
+        if 'itinerary' not in days[d]:
+            days[d]['itinerary'] = []
+        days[d]['itinerary'].append(r)
+
     return days
 
 

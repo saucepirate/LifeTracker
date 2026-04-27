@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 import json
+from datetime import date
 import database
 from models.tasks import RecurrenceCreate, RecurrenceUpdate
 import business
@@ -69,6 +70,11 @@ def update_recurrence(rec_id: int, body: RecurrenceUpdate):
     if body.day_of_month is not None:   fields['day_of_month'] = body.day_of_month
     if body.tag_ids is not None:        fields['tag_ids'] = json.dumps(body.tag_ids)
     if body.active is not None:         fields['active'] = body.active
+    if body.end_date is not None:       fields['end_date'] = body.end_date or None
+
+    scheduling_changed = any(
+        f in fields for f in ('cadence', 'interval_value', 'end_date')
+    )
 
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)
@@ -76,10 +82,23 @@ def update_recurrence(rec_id: int, body: RecurrenceUpdate):
             f"UPDATE task_recurrences SET {set_clause} WHERE id = ?",
             list(fields.values()) + [rec_id]
         )
-        conn.commit()
 
-    updated = conn.execute("SELECT * FROM task_recurrences WHERE id = ?", (rec_id,)).fetchone()
+    if scheduling_changed:
+        # Clear stale future pending tasks so generation rebuilds on new schedule
+        conn.execute(
+            "DELETE FROM tasks WHERE recurrence_id = ? AND status = 'pending' AND due_date > ?",
+            (rec_id, date.today().isoformat())
+        )
+
+    conn.commit()
     conn.close()
+
+    if scheduling_changed:
+        business.generate_recurring_tasks()
+
+    conn2 = database.get_connection()
+    updated = conn2.execute("SELECT * FROM task_recurrences WHERE id = ?", (rec_id,)).fetchone()
+    conn2.close()
     return _fmt(updated)
 
 
@@ -87,6 +106,6 @@ def update_recurrence(rec_id: int, body: RecurrenceUpdate):
 def delete_recurrence(rec_id: int):
     conn = database.get_connection()
     conn.execute("UPDATE task_recurrences SET active = 0 WHERE id = ?", (rec_id,))
-    conn.execute("UPDATE tasks SET recurrence_id = NULL, is_recurring = 0 WHERE recurrence_id = ? AND status = 'pending'", (rec_id,))
+    conn.execute("DELETE FROM tasks WHERE recurrence_id = ? AND status = 'pending'", (rec_id,))
     conn.commit()
     conn.close()

@@ -32,9 +32,9 @@ def generate_recurring_tasks(until=None):
     today = date.today()
     if until:
         end = date.fromisoformat(str(until)) if not isinstance(until, date) else until
-        end = max(end, today + timedelta(days=7))
+        end = max(end, today + timedelta(days=14))
     else:
-        end = today + timedelta(days=7)
+        end = today + timedelta(days=14)
 
     recurrences = conn.execute(
         "SELECT * FROM task_recurrences WHERE active = 1"
@@ -42,24 +42,80 @@ def generate_recurring_tasks(until=None):
 
     for rec in recurrences:
         rec = dict(rec)
+        cadence = rec['cadence']
         tag_ids = json.loads(rec['tag_ids'] or '[]')
         days_of_week = json.loads(rec['days_of_week'] or '[]')
 
-        current = today
+        rec_end = date.fromisoformat(rec['end_date']) if rec.get('end_date') else None
+        interval = rec.get('interval_value') or 1
+        # Use the earliest task due_date as reference — set from Python local date.today(),
+        # avoiding SQLite's UTC datetime('now') vs local-time mismatch in created_at.
+        seed_row = conn.execute(
+            "SELECT MIN(due_date) as min_date FROM tasks WHERE recurrence_id = ? AND due_date IS NOT NULL",
+            (rec['id'],)
+        ).fetchone()
+        if seed_row and seed_row['min_date']:
+            ref = date.fromisoformat(seed_row['min_date'])
+        else:
+            ref = date.fromisoformat(rec['created_at'][:10])
+        ref_monday = ref - timedelta(days=ref.weekday())
+
+        # Delete null-due_date pending tasks (legacy data); they get recreated below with correct dates.
+        conn.execute(
+            "DELETE FROM tasks WHERE recurrence_id = ? AND due_date IS NULL AND status = 'pending'",
+            (rec['id'],)
+        )
+
+        # Purge any pending tasks that don't match the current cadence/interval so stale
+        # incorrectly-spaced instances don't accumulate.
+        pending = conn.execute(
+            "SELECT id, due_date FROM tasks WHERE recurrence_id = ? AND status = 'pending' AND due_date IS NOT NULL",
+            (rec['id'],)
+        ).fetchall()
+        for pt in pending:
+            pt_date = date.fromisoformat(pt['due_date'])
+            if cadence == 'daily':
+                keep = (pt_date - ref).days % interval == 0
+            elif cadence == 'weekly':
+                pt_monday = pt_date - timedelta(days=pt_date.weekday())
+                wdiff = (pt_monday - ref_monday).days // 7
+                in_week = wdiff % interval == 0
+                keep = (pt_date.weekday() in days_of_week if days_of_week else pt_date.weekday() == ref.weekday()) and in_week
+            elif cadence == 'monthly':
+                mdiff = (pt_date.year - ref.year) * 12 + (pt_date.month - ref.month)
+                target_day = rec['day_of_month'] or ref.day
+                keep = pt_date.day == target_day and mdiff % interval == 0
+            else:
+                keep = True
+            if not keep:
+                conn.execute("DELETE FROM tasks WHERE id = ?", (pt['id'],))
+
+        # Never generate instances before the reference (start) date.
+        start = max(today, ref)
+        # If start date is beyond the current window, extend so at least 14 days are generated.
+        if start > end:
+            end = start + timedelta(days=14)
+
+        current = start
         while current <= end:
+            if rec_end and current > rec_end:
+                break
             should = False
-            cadence = rec['cadence']
 
             if cadence == 'daily':
-                should = True
+                should = (current - ref).days % interval == 0
             elif cadence == 'weekly':
+                cur_monday = current - timedelta(days=current.weekday())
+                week_diff = (cur_monday - ref_monday).days // 7
+                in_right_week = week_diff % interval == 0
                 if days_of_week:
-                    should = current.weekday() in days_of_week
+                    should = current.weekday() in days_of_week and in_right_week
                 else:
-                    created_day = date.fromisoformat(rec['created_at'][:10]).weekday()
-                    should = current.weekday() == created_day
+                    should = current.weekday() == ref.weekday() and in_right_week
             elif cadence == 'monthly':
-                should = bool(rec['day_of_month']) and current.day == rec['day_of_month']
+                month_diff = (current.year - ref.year) * 12 + (current.month - ref.month)
+                target_day = rec['day_of_month'] or ref.day
+                should = current.day == target_day and month_diff % interval == 0
             elif cadence == 'custom':
                 if days_of_week:
                     should = current.weekday() in days_of_week

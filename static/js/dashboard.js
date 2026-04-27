@@ -1,4 +1,9 @@
+let _dashTripId = null;
+let _dashTrips  = [];
+
 registerPage('dashboard', async function(content) {
+  _dashTripId = null;
+
   content.innerHTML = `
     <div class="dash-page">
       <div id="dash-header"></div>
@@ -8,9 +13,12 @@ registerPage('dashboard', async function(content) {
       <div id="dash-upcoming"></div>
     </div>`;
 
-  let data;
+  let data, tripsData;
   try {
-    data = await apiFetch('GET', '/dashboard');
+    [data, tripsData] = await Promise.all([
+      apiFetch('GET', '/dashboard'),
+      apiFetch('GET', '/trips').catch(() => ({ upcoming: [], planning: [], past: [] })),
+    ]);
   } catch(e) {
     content.querySelector('.dash-page').innerHTML =
       `<div class="empty-state"><div class="empty-state-title">Couldn't load dashboard</div>
@@ -18,6 +26,7 @@ registerPage('dashboard', async function(content) {
     return;
   }
 
+  _dashTrips = [...(tripsData.upcoming || []), ...(tripsData.planning || []), ...(tripsData.past || [])];
   _renderHeader(data.user_name);
   _renderStats(data.stats);
   _renderMain(data);
@@ -25,17 +34,42 @@ registerPage('dashboard', async function(content) {
   _renderUpcoming(data.upcoming_tasks);
 });
 
+async function _dashReload() {
+  const url = _dashTripId ? `/dashboard?trip_id=${_dashTripId}` : '/dashboard';
+  try {
+    const data = await apiFetch('GET', url);
+    _renderStats(data.stats);
+    _renderMain(data);
+    _renderInsights(data);
+    _renderUpcoming(data.upcoming_tasks);
+  } catch(e) {}
+}
+
 function _renderHeader(userName) {
   const el = document.getElementById('dash-header');
   if (!el) return;
   const dateStr = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
   });
+  const tripOpts = _dashTrips.map(t =>
+    `<option value="${t.id}"${_dashTripId === t.id ? ' selected' : ''}>${escHtml(t.name)}</option>`
+  ).join('');
+  const tripFilter = _dashTrips.length ? `
+    <select id="dash-trip-filter" class="form-select" style="font-size:13px;padding:5px 8px;height:auto;min-width:120px">
+      <option value="">All trips</option>${tripOpts}
+    </select>` : '';
   el.innerHTML = `
     <div class="dash-header">
-      <h1 class="dash-greeting">${greeting()}, ${escHtml(userName)}!</h1>
-      <div class="dash-date">${dateStr}</div>
+      <div>
+        <h1 class="dash-greeting">${greeting()}, ${escHtml(userName)}!</h1>
+        <div class="dash-date">${dateStr}</div>
+      </div>
+      ${tripFilter}
     </div>`;
+  el.querySelector('#dash-trip-filter')?.addEventListener('change', async e => {
+    _dashTripId = parseInt(e.target.value) || null;
+    await _dashReload();
+  });
 }
 
 function _renderStats(stats) {

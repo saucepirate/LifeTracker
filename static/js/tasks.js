@@ -2,12 +2,14 @@
 let _tasks = [];
 let _tags = [];
 let _tGoals = [];
+let _tTrips = [];
 let _goalItems = { metrics: [], milestones: [], habits: [] };
 let _filter = 'all';
 let _sort = 'due_date';
 let _selectedId = null;
 let _activeTagIds = new Set();
 let _activeGoalId = null;
+let _activeTripId = null;
 let _wideMode = true;
 let _expandedTaskId = null;
 let _showTargets = false;
@@ -21,6 +23,7 @@ registerPage('tasks', async function(content) {
   _filter = 'all';
   _activeTagIds = new Set();
   _activeGoalId = null;
+  _activeTripId = null;
   _selectedId = null;
   _expandedTaskId = null;
   _wideMode = true;
@@ -73,16 +76,18 @@ function removeListConfig(id) { saveListConfigs(loadListConfigs().filter(c => c.
 // ── Data loading ──────────────────────────────────────────────
 async function loadAll() {
   try { await apiFetch('POST', '/recurrences/generate'); } catch(e) { /* non-fatal */ }
-  const [tr, gr, rr, gi] = await Promise.all([
+  const [tr, gr, rr, gi, trips] = await Promise.all([
     apiFetch('GET', '/tasks'),
     apiFetch('GET', '/goals'),
     apiFetch('GET', '/tags'),
     apiFetch('GET', '/goals/items').catch(() => ({ metrics: [], milestones: [], habits: [] })),
+    apiFetch('GET', '/trips').catch(() => ({ upcoming: [], planning: [], past: [] })),
   ]);
   _tasks = tr.items;
   _tGoals = gr.items;
   _tags  = rr.items;
   _goalItems = gi;
+  _tTrips = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
 }
 
 // ── Render orchestration ──────────────────────────────────────
@@ -121,6 +126,11 @@ function renderSecondaryFilters() {
   const container = document.getElementById('tasks-filter-bar');
   if (!container) return;
 
+  const sections = (() => {
+    const s = JSON.parse(localStorage.getItem('tf_sections') || '{}');
+    return { status: s.status !== false, tags: s.tags !== false, trip: s.trip !== false, goal: s.goal !== false };
+  })();
+
   const statusPills = ['all','today','upcoming','recurring','completed'].map(f =>
     `<button class="tf-pill tf-status${_filter === f ? ' active' : ''}" data-filter="${f}">${capitalize(f)}</button>`
   ).join('');
@@ -138,20 +148,62 @@ function renderSecondaryFilters() {
       ${_tGoals.map(g => `<option value="${g.id}"${_activeGoalId === g.id ? ' selected' : ''}>${escHtml(g.title)}</option>`).join('')}
     </select>` : '';
 
-  const tagGroup   = _tags.length   ? `<div class="tf-group">${tagPills}</div>` : '';
-  const tagSection = (_tags.length || _tGoals.length) ? `
-    <div class="tf-sep"></div>${tagGroup}${goalSelect}` : '';
+  const tripSelect = _tTrips.length ? `
+    <select id="trip-filter-select" class="tf-goal-select">
+      <option value="">All trips</option>
+      ${_tTrips.map(t => `<option value="${t.id}"${_activeTripId === t.id ? ' selected' : ''}>${escHtml(t.name)}</option>`).join('')}
+    </select>` : '';
 
-  container.innerHTML = `
-    <div class="task-filter-bar">
-      <div class="tf-group">${statusPills}</div>
-      ${tagSection}
-      <div class="tf-sep"></div>
-      <span class="tf-label">Include</span>
+  function mkSection(key, label, body, hasActive) {
+    const open = sections[key];
+    return `
+      <div class="tf-section">
+        <button class="tf-section-hdr" data-section="${key}">
+          <svg class="tf-section-chevron${open ? ' open' : ''}" viewBox="0 0 12 12" fill="none">
+            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="tf-section-name">${label}</span>
+          ${hasActive ? '<span class="tf-active-dot"></span>' : ''}
+        </button>
+        <div class="tf-section-body${open ? '' : ' collapsed'}">${body}</div>
+      </div>`;
+  }
+
+  const statusSection = mkSection('status', 'Status',
+    `<div class="tf-group">${statusPills}</div>`,
+    _filter !== 'all');
+
+  const tagsSection = _tags.length ? mkSection('tags', 'Tags',
+    `<div class="tf-tag-wrap">${tagPills}</div>`,
+    _activeTagIds.size > 0) : '';
+
+  const tripSection = _tTrips.length ? mkSection('trip', 'Trip',
+    tripSelect,
+    _activeTripId !== null) : '';
+
+  const goalSection = mkSection('goal', 'Goal',
+    `<div class="tf-row">${goalSelect}<span class="tf-label">Include</span>
       <button class="tf-pill goal-type-pill${_showTargets    ? ' active tf-active--cyan'   : ''}" data-type="targets">Targets</button>
       <button class="tf-pill goal-type-pill${_showMilestones ? ' active tf-active--purple' : ''}" data-type="milestones">Milestones</button>
       <button class="tf-pill goal-type-pill${_showHabits     ? ' active tf-active--green'  : ''}" data-type="habits">Habits</button>
-    </div>`;
+    </div>`,
+    _activeGoalId !== null || _showTargets || _showMilestones || _showHabits);
+
+  container.innerHTML = `<div class="task-filter-bar">${statusSection}${tagsSection}${tripSection}${goalSection}</div>`;
+
+  // Section expand/collapse
+  container.querySelectorAll('.tf-section-hdr').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      const key = hdr.dataset.section;
+      const saved = JSON.parse(localStorage.getItem('tf_sections') || '{}');
+      const nowOpen = !(sections[key]);
+      saved[key] = nowOpen;
+      sections[key] = nowOpen;
+      localStorage.setItem('tf_sections', JSON.stringify(saved));
+      hdr.querySelector('.tf-section-chevron').classList.toggle('open', nowOpen);
+      hdr.nextElementSibling.classList.toggle('collapsed', !nowOpen);
+    });
+  });
 
   container.querySelectorAll('.tf-status').forEach(pill => {
     pill.addEventListener('click', () => {
@@ -175,6 +227,14 @@ function renderSecondaryFilters() {
   if (goalSel) {
     goalSel.addEventListener('change', e => {
       _activeGoalId = parseInt(e.target.value) || null;
+      renderAllLists();
+    });
+  }
+
+  const tripSel = container.querySelector('#trip-filter-select');
+  if (tripSel) {
+    tripSel.addEventListener('change', e => {
+      _activeTripId = parseInt(e.target.value) || null;
       renderAllLists();
     });
   }
@@ -278,7 +338,7 @@ function getTasksForConfig(config) {
       result = _tasks.filter(t => t.status === 'completed');
       break;
     default:
-      result = _tasks.filter(t => t.status !== 'abandoned');
+      result = _tasks.filter(t => t.status === 'pending');
   }
 
   if (config.type === 'master') {
@@ -286,6 +346,11 @@ function getTasksForConfig(config) {
       result = result.filter(t => t.tags && t.tags.some(tg => _activeTagIds.has(tg.id)));
     if (_activeGoalId)
       result = result.filter(t => t.goal_id === _activeGoalId);
+    if (_activeTripId) {
+      const trip = _tTrips.find(tr => tr.id === _activeTripId);
+      if (trip?.tag_id)
+        result = result.filter(t => t.tags && t.tags.some(tg => tg.id === trip.tag_id));
+    }
   } else if (config.type === 'tag') {
     result = result.filter(t => t.tags && t.tags.some(tg => tg.id === config.filter_id));
   } else if (config.type === 'goal') {
@@ -367,6 +432,13 @@ function renderColumnTasks(config, bodyEl) {
     });
   });
 
+  bodyEl.querySelectorAll('.task-reopen-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      doReopenTask(parseInt(btn.dataset.id));
+    });
+  });
+
   // Goal item events (master + goal columns)
   if (config.type === 'master' || config.type === 'goal') {
     bodyEl.querySelectorAll('.milestone-row .goal-item-check .checkbox-circle').forEach(cb => {
@@ -390,6 +462,17 @@ function renderColumnTasks(config, bodyEl) {
       row.addEventListener('click', () => {
         const goalId = parseInt(row.dataset.goalId);
         if (goalId) { window._openGoalId = goalId; loadPage('goals'); }
+      });
+    });
+
+    bodyEl.querySelectorAll('.habit-log-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        openHabitLogModal(
+          parseInt(btn.dataset.goalId),
+          parseInt(btn.dataset.habitId),
+          btn.dataset.hasMinutes === 'true'
+        );
       });
     });
   }
@@ -538,7 +621,7 @@ function taskRowHTML(task, isWide = false) {
         ? `<div class="task-row-meta">${tagsHTML(task.tags)}${recurHTML}</div>`
         : ''}
     </div>
-    <div class="task-row-right">${dueLabelHTML}</div>`;
+    <div class="task-row-right">${dueLabelHTML}${done ? `<button class="task-reopen-btn" data-id="${task.id}" title="Reopen task">&#8629;</button>` : ''}</div>`;
 
   if (!isWide) {
     return `<div class="task-row${done ? ' done-row' : ''}" data-id="${task.id}">${innerContent}</div>`;
@@ -659,6 +742,7 @@ function habitRowHTML(h) {
           </div>
         </div>` : ''}
       </div>
+      <button class="habit-log-btn" data-goal-id="${h.goal_id}" data-habit-id="${h.id}" data-has-minutes="${!!wtMin}" title="Log a session">Log</button>
     </div>`;
 }
 
@@ -802,8 +886,35 @@ function renderDetail(task) {
     </label>`;
   }).join('');
 
-  const recurLabel = task.is_recurring && task.recurrence
-    ? `↺ ${capitalize(task.recurrence.cadence)}` : 'One-time task';
+  const recurCardHTML = task.is_recurring && task.recurrence ? (() => {
+    const rec = task.recurrence;
+    return `
+      <div class="recurrence-card recurrence-card--edit">
+        <div class="recurrence-card-header">↺ Recurring</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+          <div class="detail-field">
+            <div class="detail-field-label">Cadence</div>
+            <select id="rec-cadence">
+              <option value="daily"${rec.cadence==='daily'?' selected':''}>Daily</option>
+              <option value="weekly"${rec.cadence==='weekly'?' selected':''}>Weekly</option>
+              <option value="monthly"${rec.cadence==='monthly'?' selected':''}>Monthly</option>
+            </select>
+          </div>
+          <div class="detail-field">
+            <div class="detail-field-label">Every N</div>
+            <input type="number" id="rec-interval" min="1" value="${rec.interval_value || 1}" style="width:100%">
+          </div>
+          <div class="detail-field" style="grid-column:1/-1">
+            <div class="detail-field-label">End date (optional)</div>
+            <input type="date" id="rec-end-date" value="${rec.end_date || ''}">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-secondary btn-sm" id="rec-save">Save changes</button>
+          <button class="btn btn-danger btn-sm" id="rec-deactivate">Deactivate</button>
+        </div>
+      </div>`;
+  })() : '';
 
   pane.innerHTML = `
     <div class="detail-panel">
@@ -812,7 +923,8 @@ function renderDetail(task) {
         <button class="detail-close-btn" id="detail-close">×</button>
       </div>
       <div class="detail-body">
-        <div class="recurrence-card">${recurLabel}</div>
+        ${task.status === 'completed' ? `<div class="detail-completed-banner">&#10003; Completed${task.completed_at ? ' &middot; ' + formatDateShort(task.completed_at.slice(0,10)) : ''}</div>` : ''}
+        ${recurCardHTML}
         <div class="detail-grid">
           <div class="detail-field">
             <div class="detail-field-label">Priority</div>
@@ -856,6 +968,7 @@ function renderDetail(task) {
       </div>
       <div class="detail-footer">
         <button class="btn btn-danger btn-sm" id="detail-delete">Delete</button>
+        ${task.status === 'completed' ? '<button class="btn btn-secondary btn-sm" id="detail-reopen">&#8629; Reopen</button>' : ''}
         <button class="btn btn-primary btn-sm" id="detail-save">Save</button>
       </div>
     </div>`;
@@ -865,9 +978,13 @@ function renderDetail(task) {
   pane.querySelector('#detail-title').addEventListener('input', e => autoResizeTextarea(e.target));
   pane.querySelector('#detail-close').addEventListener('click', closeDetail);
   pane.querySelector('#detail-save').addEventListener('click', () => saveDetail(task.id));
+  pane.querySelector('#detail-reopen')?.addEventListener('click', () => doReopenTask(task.id));
   pane.querySelector('#detail-notes').addEventListener('blur', () => saveDetail(task.id, true));
   pane.querySelector('#detail-delete').addEventListener('click', () => {
-    if (confirm(`Delete "${task.title}"?`)) doDeleteTask(task.id);
+    const msg = task.is_recurring
+      ? `Delete this single occurrence of "${task.title}"?\n\nTo stop all future occurrences, use Deactivate in the recurring section above.`
+      : `Delete "${task.title}"?`;
+    if (confirm(msg)) doDeleteTask(task.id);
   });
   pane.querySelector('#subtask-add-btn').addEventListener('click', () => addSubtask(task.id));
   pane.querySelector('#subtask-input').addEventListener('keydown', e => {
@@ -877,6 +994,37 @@ function renderDetail(task) {
     window._openNoteId = task.linked_note.id;
     loadPage('notes');
   });
+
+  if (task.is_recurring && task.recurrence) {
+    pane.querySelector('#rec-save')?.addEventListener('click', async () => {
+      const recId = task.recurrence.id;
+      try {
+        await apiFetch('PUT', `/recurrences/${recId}`, {
+          cadence:        pane.querySelector('#rec-cadence').value,
+          interval_value: parseInt(pane.querySelector('#rec-interval').value) || 1,
+          end_date:       getDateVal(pane.querySelector('#rec-end-date')) || '',
+        });
+        const tr = await apiFetch('GET', '/tasks');
+        _tasks = tr.items;
+        renderStats();
+        renderAllLists();
+        closeDetail();
+      } catch(e) { alert('Could not save recurrence: ' + e.message); }
+    });
+
+    pane.querySelector('#rec-deactivate')?.addEventListener('click', async () => {
+      if (!confirm('Stop this recurring task and delete all pending occurrences?\n\nCompleted occurrences will be kept. This cannot be undone.')) return;
+      try {
+        await apiFetch('DELETE', `/recurrences/${task.recurrence.id}`);
+        const refreshed = await apiFetch('GET', `/tasks/${task.id}`);
+        const idx = _tasks.findIndex(t => t.id === task.id);
+        if (idx >= 0) _tasks[idx] = refreshed;
+        renderStats();
+        renderAllLists();
+        renderDetail(refreshed);
+      } catch(e) { alert('Could not deactivate: ' + e.message); }
+    });
+  }
 }
 
 function renderSubtasks(subtasks) {
@@ -925,7 +1073,7 @@ async function addSubtask(taskId) {
 async function saveDetail(taskId, silent = false) {
   const title    = document.getElementById('detail-title')?.value.trim();
   const priority = document.getElementById('detail-priority')?.value;
-  const due_date = document.getElementById('detail-due')?.value || null;
+  const due_date = getDateVal(document.getElementById('detail-due'));
   const goal_id  = parseInt(document.getElementById('detail-goal')?.value) || null;
   const notes    = document.getElementById('detail-notes')?.value ?? null;
   const tag_ids  = Array.from(document.querySelectorAll('#detail-tags input[type=checkbox]'))
@@ -945,8 +1093,7 @@ async function saveDetail(taskId, silent = false) {
     if (idx >= 0) _tasks[idx] = updated;
     renderStats();
     renderAllLists();
-    const pane = document.getElementById('tasks-detail-pane');
-    if (!silent && pane?.classList.contains('open')) renderDetail(updated);
+    if (!silent) closeDetail();
   } catch(e) {
     if (!silent) alert('Save failed: ' + e.message);
   }
@@ -961,6 +1108,18 @@ async function doCompleteTask(taskId) {
     if (_selectedId === taskId) closeDetail();
     renderAll();
   } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function doReopenTask(taskId) {
+  try {
+    const updated = await apiFetch('PUT', `/tasks/${taskId}`, { status: 'pending' });
+    const idx = _tasks.findIndex(t => t.id === taskId);
+    if (idx >= 0) _tasks[idx] = updated;
+    renderStats();
+    renderAllLists();
+    const pane = document.getElementById('tasks-detail-pane');
+    if (pane?.classList.contains('open') && _selectedId === taskId) renderDetail(updated);
+  } catch(e) { alert('Could not reopen task: ' + e.message); }
 }
 
 async function doDeleteTask(taskId) {
@@ -981,6 +1140,36 @@ async function refreshSelectedTask() {
   renderSubtasks(updated.subtasks || []);
 }
 
+// ── Habit log modal ───────────────────────────────────────────
+function openHabitLogModal(goalId, habitId, hasMinutes) {
+  const body = `
+    ${hasMinutes ? `
+    <div class="form-group">
+      <label class="form-label">Duration (minutes)</label>
+      <input class="form-input" id="hl-minutes" type="number" min="1" placeholder="e.g. 30">
+    </div>` : ''}
+    <div class="form-group">
+      <label class="form-label">Note (optional)</label>
+      <textarea class="form-textarea" id="hl-note" placeholder="How did it go?"></textarea>
+    </div>`;
+
+  const modal = createModal('Log habit session', body, async (overlay) => {
+    const minutes = hasMinutes ? (parseInt(overlay.querySelector('#hl-minutes')?.value) || null) : null;
+    const note    = overlay.querySelector('#hl-note')?.value.trim() || null;
+    try {
+      await apiFetch('POST', `/goals/${goalId}/log`, { habit_id: habitId, value: minutes, note });
+      closeModal(overlay);
+      overlay.remove();
+      // Reload goal items and re-render so progress bars update
+      const gi = await apiFetch('GET', '/goals/items').catch(() => _goalItems);
+      _goalItems = gi;
+      renderAllLists();
+    } catch(e) { alert('Could not log session: ' + e.message); }
+  }, 'Log session');
+
+  openModal(modal);
+}
+
 // ── New task modal ────────────────────────────────────────────
 function openNewTaskModal(prefilledGoalId = null) {
   const tagOpts = _tags.map(tg =>
@@ -996,8 +1185,38 @@ function openNewTaskModal(prefilledGoalId = null) {
       <label class="form-label">Title *</label>
       <input class="form-input" id="nt-title" placeholder="Task title" autofocus>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="form-group">
+    <div class="form-group" style="margin-bottom:6px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
+        <input type="checkbox" id="nt-recurring"> Make recurring
+      </label>
+    </div>
+    <div id="nt-recur-options" style="display:none;padding:10px;background:var(--bg-input);border-radius:8px;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
+          <label class="form-label">Start date</label>
+          <input class="form-input" id="nt-start-date" type="date">
+          <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Leave blank to start today</div>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Cadence</label>
+          <select class="form-select" id="nt-cadence">
+            <option value="daily">Daily</option>
+            <option value="weekly" selected>Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Every N</label>
+          <input class="form-input" id="nt-interval" type="number" value="1" min="1">
+        </div>
+        <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
+          <label class="form-label">End date (optional)</label>
+          <input class="form-input" id="nt-end-date" type="date">
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px">
+      <div class="form-group" style="flex:1">
         <label class="form-label">Priority</label>
         <select class="form-select" id="nt-priority">
           <option value="high">High</option>
@@ -1005,7 +1224,7 @@ function openNewTaskModal(prefilledGoalId = null) {
           <option value="low">Low</option>
         </select>
       </div>
-      <div class="form-group">
+      <div class="form-group" style="flex:1" id="nt-due-col">
         <label class="form-label">Due date</label>
         <input class="form-input" id="nt-due" type="date">
       </div>
@@ -1023,58 +1242,43 @@ function openNewTaskModal(prefilledGoalId = null) {
     <div class="form-group">
       <label class="form-label">Notes</label>
       <textarea class="form-textarea" id="nt-notes" placeholder="Optional notes…"></textarea>
-    </div>
-    <div class="form-group">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
-        <input type="checkbox" id="nt-recurring"> Make recurring
-      </label>
-    </div>
-    <div id="nt-recur-options" style="display:none;padding:10px;background:var(--bg-input);border-radius:8px;margin-top:-8px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">Cadence</label>
-          <select class="form-select" id="nt-cadence">
-            <option value="daily">Daily</option>
-            <option value="weekly" selected>Weekly</option>
-            <option value="monthly">Monthly</option>
-          </select>
-        </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">Every N</label>
-          <input class="form-input" id="nt-interval" type="number" value="1" min="1">
-        </div>
-      </div>
     </div>`;
 
   const modal = createModal('New task', body, async (overlay) => {
-    const title = document.getElementById('nt-title').value.trim();
+    const title = overlay.querySelector('#nt-title').value.trim();
     if (!title) { alert('Title is required.'); return; }
     const checkedTags = Array.from(overlay.querySelectorAll('input[name=tag]:checked')).map(c => parseInt(c.value));
-    const isRecurring = document.getElementById('nt-recurring').checked;
+    const isRecurring = overlay.querySelector('#nt-recurring').checked;
     const payload = {
       title,
-      priority: document.getElementById('nt-priority').value,
-      due_date: document.getElementById('nt-due').value || null,
-      goal_id:  parseInt(document.getElementById('nt-goal').value) || null,
-      notes:    document.getElementById('nt-notes').value || null,
+      priority: overlay.querySelector('#nt-priority').value,
+      due_date: isRecurring
+        ? getDateVal(overlay.querySelector('#nt-start-date'))
+        : getDateVal(overlay.querySelector('#nt-due')),
+      goal_id:  parseInt(overlay.querySelector('#nt-goal').value) || null,
+      notes:    overlay.querySelector('#nt-notes').value || null,
       tag_ids:  checkedTags,
       make_recurring: isRecurring,
     };
     if (isRecurring) {
-      payload.recurrence_cadence  = document.getElementById('nt-cadence').value;
-      payload.recurrence_interval = parseInt(document.getElementById('nt-interval').value) || 1;
+      payload.recurrence_cadence   = overlay.querySelector('#nt-cadence').value;
+      payload.recurrence_interval  = parseInt(overlay.querySelector('#nt-interval').value) || 1;
+      payload.recurrence_end_date  = getDateVal(overlay.querySelector('#nt-end-date'));
     }
     try {
-      const created = await apiFetch('POST', '/tasks', payload);
-      _tasks.unshift(created);
+      await apiFetch('POST', '/tasks', payload);
       closeModal(overlay);
       overlay.remove();
+      // GET /tasks triggers generate server-side; covers both recurring and non-recurring
+      const tr = await apiFetch('GET', '/tasks');
+      _tasks = tr.items;
       renderAll();
     } catch(e) { alert('Error: ' + e.message); }
   });
 
   modal.querySelector('#nt-recurring').addEventListener('change', e => {
     modal.querySelector('#nt-recur-options').style.display = e.target.checked ? 'block' : 'none';
+    modal.querySelector('#nt-due-col').style.display       = e.target.checked ? 'none'  : '';
   });
   openModal(modal);
 }

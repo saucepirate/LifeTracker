@@ -11,6 +11,8 @@ let _calGridEnd = null;
 let _calWeekEnd = null;
 let _calFilters = { events: true, tasks: true, milestones: true, metrics: true, hideRecurring: true };
 let _calGoals = [];
+let _calTrips = [];
+let _calTripId = null;
 let _calDayDate = null;
 
 const CAL_HOUR_START = 7;
@@ -56,6 +58,10 @@ registerPage('calendar', async function(content) {
           <button class="tf-pill cal-type-btn active" data-type="metrics">Targets</button>
           <span class="cal-filter-sep"></span>
           <button class="tf-pill cal-type-btn active cal-recurring-toggle" data-type="hideRecurring">Hide recurring</button>
+          <span class="cal-filter-sep"></span>
+          <select id="cal-trip-filter" class="form-select" style="font-size:13px;padding:4px 8px;height:auto;width:auto;min-width:110px">
+            <option value="">All trips</option>
+          </select>
           <span style="flex:1"></span>
           <span class="cal-legend">
             <span class="cal-legend-item"><span class="cal-legend-dot" style="background:var(--neon-blue)"></span>Event</span>
@@ -120,18 +126,36 @@ registerPage('calendar', async function(content) {
 // ── Meta ─────────────────────────────────────────────────────────────────────
 async function calLoadMeta() {
   try {
-    const [notes, tasks, goals] = await Promise.all([
+    const [notes, tasks, goals, trips] = await Promise.all([
       apiFetch('GET', '/notes'),
       apiFetch('GET', '/tasks?status=pending'),
       apiFetch('GET', '/goals'),
+      apiFetch('GET', '/trips').catch(() => ({ upcoming: [], planning: [], past: [] })),
     ]);
     _calNotes = Array.isArray(notes) ? notes : (notes.items || []);
     _calTasks = Array.isArray(tasks) ? tasks : (tasks.items || []);
     _calGoals = Array.isArray(goals) ? goals : (goals.items || []);
+    _calTrips = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
   } catch(e) {
     _calNotes = [];
     _calTasks = [];
     _calGoals = [];
+    _calTrips = [];
+  }
+  // Populate trip dropdown
+  const sel = document.getElementById('cal-trip-filter');
+  if (sel && _calTrips.length) {
+    _calTrips.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name;
+      if (_calTripId === t.id) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', e => {
+      _calTripId = parseInt(e.target.value) || null;
+      calRerender();
+    });
   }
 }
 
@@ -263,6 +287,13 @@ function renderMonthGrid(gridStart, gridEnd) {
       if (item.type === 'task') {
         if (!_calFilters.tasks) return false;
         if (_calFilters.hideRecurring && item.obj.is_recurring) return false;
+        if (_calTripId) {
+          const trip = _calTrips.find(t => t.id === _calTripId);
+          if (trip?.tag_id) {
+            const full = _calTasks.find(ct => ct.id === item.obj.id);
+            if (!full?.tags?.some(tg => tg.id === trip.tag_id)) return false;
+          }
+        }
       }
       if (item.type === 'milestone' && !_calFilters.milestones) return false;
       if (item.type === 'metric' && !_calFilters.metrics) return false;
@@ -332,7 +363,17 @@ function openDayPanel(dateStr) {
   // Apply active filters
   const events = _calFilters.events ? (dayData.events || []) : [];
   const tasks = _calFilters.tasks
-    ? (dayData.tasks || []).filter(t => !(_calFilters.hideRecurring && t.is_recurring))
+    ? (dayData.tasks || []).filter(t => {
+        if (_calFilters.hideRecurring && t.is_recurring) return false;
+        if (_calTripId) {
+          const trip = _calTrips.find(tr => tr.id === _calTripId);
+          if (trip?.tag_id) {
+            const full = _calTasks.find(ct => ct.id === t.id);
+            if (!full?.tags?.some(tg => tg.id === trip.tag_id)) return false;
+          }
+        }
+        return true;
+      })
     : [];
   const milestones = _calFilters.milestones ? (dayData.milestones || []) : [];
   const metrics = _calFilters.metrics ? (dayData.metrics || []) : [];
@@ -555,7 +596,17 @@ function renderDayView(dateStr) {
 
   const events = _calFilters.events ? (dayData.events || []) : [];
   const tasks = _calFilters.tasks
-    ? (dayData.tasks || []).filter(t => !(_calFilters.hideRecurring && t.is_recurring))
+    ? (dayData.tasks || []).filter(t => {
+        if (_calFilters.hideRecurring && t.is_recurring) return false;
+        if (_calTripId) {
+          const trip = _calTrips.find(tr => tr.id === _calTripId);
+          if (trip?.tag_id) {
+            const full = _calTasks.find(ct => ct.id === t.id);
+            if (!full?.tags?.some(tg => tg.id === trip.tag_id)) return false;
+          }
+        }
+        return true;
+      })
     : [];
   const milestones = _calFilters.milestones ? (dayData.milestones || []) : [];
   const metrics = _calFilters.metrics ? (dayData.metrics || []) : [];
@@ -720,6 +771,13 @@ function renderWeekGrid(weekStart, weekEnd) {
       if (item.type === 'task') {
         if (!_calFilters.tasks) return false;
         if (_calFilters.hideRecurring && item.obj.is_recurring) return false;
+        if (_calTripId) {
+          const trip = _calTrips.find(t => t.id === _calTripId);
+          if (trip?.tag_id) {
+            const full = _calTasks.find(ct => ct.id === item.obj.id);
+            if (!full?.tags?.some(tg => tg.id === trip.tag_id)) return false;
+          }
+        }
       }
       if (item.type === 'milestone' && !_calFilters.milestones) return false;
       if (item.type === 'metric' && !_calFilters.metrics) return false;
@@ -916,10 +974,10 @@ function openEventModal(date, time, existing) {
   const modal = createModal(title, bodyHTML, async () => {
     const titleVal = document.getElementById('ev-title').value.trim();
     if (!titleVal) { alert('Title is required.'); return false; }
-    const dateVal = document.getElementById('ev-date').value;
+    const dateVal = getDateVal(document.getElementById('ev-date'));
     if (!dateVal) { alert('Date is required.'); return false; }
     const allDayVal = document.getElementById('ev-allday').checked;
-    const endDateVal = document.getElementById('ev-end-date').value || null;
+    const endDateVal = getDateVal(document.getElementById('ev-end-date'));
     const startTimeVal = allDayVal ? null : (document.getElementById('ev-start-time').value || null);
     const endTimeVal = allDayVal ? null : (document.getElementById('ev-end-time').value || null);
     const notesVal = document.getElementById('ev-notes').value.trim() || null;
@@ -1016,7 +1074,7 @@ function openTaskModal(dateStr) {
     const title = document.getElementById('cal-task-title').value.trim();
     if (!title) { alert('Title is required.'); return false; }
     const priority = document.getElementById('cal-task-priority').value;
-    const dueDate = document.getElementById('cal-task-due').value || null;
+    const dueDate = getDateVal(document.getElementById('cal-task-due'));
     const notes = document.getElementById('cal-task-notes').value.trim() || null;
     try {
       const task = await apiFetch('POST', '/tasks', { title, priority, due_date: dueDate, notes, status: 'pending' });
@@ -1056,7 +1114,7 @@ function openMilestoneModal(dateStr) {
     if (!goalId) { alert('Select a goal.'); return false; }
     const title = document.getElementById('cal-ms-title').value.trim();
     if (!title) { alert('Title is required.'); return false; }
-    const targetDate = document.getElementById('cal-ms-date').value || null;
+    const targetDate = getDateVal(document.getElementById('cal-ms-date'));
     try {
       await apiFetch('POST', `/goals/${goalId}/milestones`, { title, target_date: targetDate });
       await calLoadAndRender();

@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from typing import Optional
 from datetime import date, timedelta
 import database
 import business
@@ -7,7 +8,7 @@ router = APIRouter()
 
 
 @router.get("")
-def get_dashboard():
+def get_dashboard(trip_id: Optional[int] = None):
     business.generate_recurring_tasks()
     conn = database.get_connection()
     today = date.today().isoformat()
@@ -19,21 +20,32 @@ def get_dashboard():
     ).fetchone()
     user_name = name_row['value'] if name_row else 'there'
 
+    # Resolve trip → tag filter
+    tag_join = ""
+    tag_cond = ""
+    tag_p    = []
+    if trip_id:
+        t_row = conn.execute("SELECT tag_id FROM trips WHERE id = ?", (trip_id,)).fetchone()
+        if t_row and t_row['tag_id']:
+            tag_join = " JOIN task_tags _tt ON _tt.task_id = t.id"
+            tag_cond = " AND _tt.tag_id = ?"
+            tag_p    = [t_row['tag_id']]
+
     today_rows = conn.execute(
-        """SELECT t.id, t.title, t.priority, t.due_date, t.status, t.is_recurring
-           FROM tasks t
-           WHERE t.status = 'pending' AND (t.due_date = ? OR t.due_date < ?)
+        f"""SELECT t.id, t.title, t.priority, t.due_date, t.status, t.is_recurring
+           FROM tasks t{tag_join}
+           WHERE t.status = 'pending' AND (t.due_date = ? OR t.due_date < ?){tag_cond}
            ORDER BY t.due_date ASC,
                     CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END""",
-        (today, today)
+        [today, today] + tag_p
     ).fetchall()
 
     upcoming_rows = conn.execute(
-        """SELECT t.id, t.title, t.priority, t.due_date
-           FROM tasks t
-           WHERE t.status = 'pending' AND t.due_date > ? AND t.due_date <= ?
+        f"""SELECT t.id, t.title, t.priority, t.due_date
+           FROM tasks t{tag_join}
+           WHERE t.status = 'pending' AND t.due_date > ? AND t.due_date <= ?{tag_cond}
            ORDER BY t.due_date ASC""",
-        (today, in7)
+        [today, in7] + tag_p
     ).fetchall()
 
     goal_rows = conn.execute(
@@ -42,9 +54,15 @@ def get_dashboard():
            ORDER BY pinned DESC, is_on_track ASC, progress_pct DESC"""
     ).fetchall()
 
-    note_rows = conn.execute(
-        "SELECT id, title, updated_at FROM notes ORDER BY updated_at DESC LIMIT 4"
-    ).fetchall()
+    if trip_id:
+        note_rows = conn.execute(
+            "SELECT id, title, updated_at FROM notes WHERE trip_id = ? ORDER BY updated_at DESC LIMIT 4",
+            (trip_id,)
+        ).fetchall()
+    else:
+        note_rows = conn.execute(
+            "SELECT id, title, updated_at FROM notes ORDER BY updated_at DESC LIMIT 4"
+        ).fetchall()
 
     today_tasks = [dict(r) for r in today_rows]
     for t in today_tasks:
@@ -116,8 +134,9 @@ def get_dashboard():
 
     due_today_pending = len([t for t in today_tasks if t['due_date'] == today])
     completed_today = conn.execute(
-        "SELECT COUNT(*) FROM tasks WHERE due_date = ? AND status = 'completed' AND date(completed_at) = ?",
-        (today, today)
+        f"""SELECT COUNT(*) FROM tasks t{tag_join}
+            WHERE t.due_date = ? AND t.status = 'completed' AND date(t.completed_at) = ?{tag_cond}""",
+        [today, today] + tag_p
     ).fetchone()[0]
 
     conn.close()

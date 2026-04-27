@@ -2,6 +2,8 @@
 let _notes        = [];
 let _allTags      = [];
 let _nGoals       = [];
+let _nTrips       = [];
+let _nTripId      = null;
 let _nSelectedId  = null;
 let _nTagFilters  = new Set();
 let _nSearch      = '';
@@ -17,14 +19,16 @@ registerPage('notes', async function(content) {
   _quill       = null;
 
   try {
-    const [nd, td, gd] = await Promise.all([
+    const [nd, td, gd, trips] = await Promise.all([
       apiFetch('GET', '/notes'),
       apiFetch('GET', '/tags'),
       apiFetch('GET', '/goals'),
+      apiFetch('GET', '/trips').catch(() => ({ upcoming: [], planning: [], past: [] })),
     ]);
     _notes   = nd.items;
     _allTags = td.items;
     _nGoals  = gd.items;
+    _nTrips  = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
   } catch(e) {
     content.innerHTML = `<div class="empty-state"><div class="empty-state-title">Couldn't load notes</div></div>`;
     return;
@@ -45,7 +49,7 @@ function _renderListView() {
   const content = document.getElementById('content');
   if (!content) return;
 
-  const activeFilterCount = _nTagFilters.size + (_nPinnedOnly ? 1 : 0);
+  const activeFilterCount = _nTagFilters.size + (_nPinnedOnly ? 1 : 0) + (_nTripId ? 1 : 0);
 
   content.innerHTML = `
     <div class="notes-page">
@@ -80,6 +84,12 @@ function _renderListView() {
             <option value="created" ${_nSort==='created'?'selected':''}>Date created</option>
             <option value="title"   ${_nSort==='title'  ?'selected':''}>Title A–Z</option>
           </select>
+          ${_nTrips.length ? `
+          <span class="notes-filter-label" style="margin-left:12px">Trip</span>
+          <select id="n-trip-filter" class="form-select" style="font-size:13px;padding:4px 8px;height:auto;width:auto;min-width:140px">
+            <option value="">All trips</option>
+            ${_nTrips.map(t => `<option value="${t.id}"${_nTripId === t.id ? ' selected' : ''}>${escHtml(t.name)}</option>`).join('')}
+          </select>` : ''}
         </div>
       </div>
 
@@ -121,6 +131,12 @@ function _renderListView() {
     _renderGrid();
   });
 
+  document.getElementById('n-trip-filter')?.addEventListener('change', e => {
+    _nTripId = parseInt(e.target.value) || null;
+    _updateFilterBtn();
+    _renderGrid();
+  });
+
   document.getElementById('n-new-btn').addEventListener('click', doCreateNote);
 
   _renderGrid();
@@ -129,7 +145,7 @@ function _renderListView() {
 function _updateFilterBtn() {
   const btn = document.getElementById('n-filters-btn');
   if (!btn) return;
-  const n = _nTagFilters.size + (_nPinnedOnly ? 1 : 0);
+  const n = _nTagFilters.size + (_nPinnedOnly ? 1 : 0) + (_nTripId ? 1 : 0);
   btn.innerHTML = `Filters${n > 0 ? ` <span class="n-filter-badge">${n}</span>` : ''}`;
 }
 
@@ -152,6 +168,7 @@ function _renderGrid() {
     );
   }
   if (_nPinnedOnly) list = list.filter(n => n.pinned);
+  if (_nTripId)     list = list.filter(n => n.trip_id === _nTripId);
 
   list.sort((a, b) => {
     if (a.pinned !== b.pinned) return b.pinned - a.pinned;
@@ -573,7 +590,7 @@ async function _createNoteTask(note) {
     const created = await apiFetch('POST', '/tasks', {
       title,
       priority: document.getElementById('n-task-priority')?.value || 'medium',
-      due_date: document.getElementById('n-task-due')?.value || null,
+      due_date: getDateVal(document.getElementById('n-task-due')),
       note_id:  note.id,
       tag_ids:  [],
     });

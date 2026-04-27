@@ -162,6 +162,88 @@ function autoResizeTextarea(el) {
   el.style.height = el.scrollHeight + 'px';
 }
 
+/* ── Smart date inputs ───────────────────────────────────── */
+function parseSmartDate(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  function _now() { const d = new Date(); d.setHours(0,0,0,0); return d; }
+  function _iso(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  // Already ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // t / t+N / t-N  (days from today)
+  const tm = s.match(/^t([+-]\d+)?$/i);
+  if (tm) { const d=_now(); if(tm[1]) d.setDate(d.getDate()+parseInt(tm[1])); return _iso(d); }
+  // w / w+N / w-N  (weeks)
+  const wm = s.match(/^w([+-]\d+)?$/i);
+  if (wm) { const d=_now(); d.setDate(d.getDate()+(wm[1]?parseInt(wm[1]):1)*7); return _iso(d); }
+  // m / m+N / m-N  (months)
+  const mm = s.match(/^m([+-]\d+)?$/i);
+  if (mm) { const d=_now(); d.setMonth(d.getMonth()+(mm[1]?parseInt(mm[1]):1)); return _iso(d); }
+  // y / y+N / y-N  (years, case-insensitive)
+  const ym = s.match(/^y([+-]\d+)?$/i);
+  if (ym) { const d=_now(); d.setFullYear(d.getFullYear()+(ym[1]?parseInt(ym[1]):1)); return _iso(d); }
+  // mm/dd/yy or mm/dd/yyyy
+  const sl = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (sl) { let y=parseInt(sl[3]); if(y<100)y+=2000; const d=new Date(y,parseInt(sl[1])-1,parseInt(sl[2])); if(!isNaN(d.getTime())&&d.getMonth()===parseInt(sl[1])-1) return _iso(d); }
+  // mm-dd-yy or mm-dd-yyyy  (not YYYY-MM-DD which is handled above)
+  const ds = s.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
+  if (ds) { let y=parseInt(ds[3]); if(y<100)y+=2000; const d=new Date(y,parseInt(ds[1])-1,parseInt(ds[2])); if(!isNaN(d.getTime())&&d.getMonth()===parseInt(ds[1])-1) return _iso(d); }
+  return null;
+}
+
+function getDateVal(el) {
+  if (!el) return null;
+  const v = el.value ? String(el.value).trim() : '';
+  if (!v) return null;
+  if (el.dataset.isoDate) return el.dataset.isoDate;
+  return parseSmartDate(v);
+}
+
+function _smartDateBlur() {
+  const raw = this.value.trim();
+  if (!raw) { delete this.dataset.isoDate; this.style.borderColor=''; return; }
+  const iso = parseSmartDate(raw);
+  if (iso) {
+    this.dataset.isoDate = iso;
+    const [y,m,d] = iso.split('-');
+    this.value = `${m}/${d}/${y}`;
+    this.style.borderColor = '';
+  } else {
+    this.style.borderColor = 'var(--neon-red,#f43f5e)';
+  }
+}
+
+function initSmartDates(root) {
+  (root || document).querySelectorAll('input[type="date"]').forEach(inp => {
+    if (inp._sdInit) return;
+    inp._sdInit = true;
+    inp.type = 'text';
+    if (inp.value && /^\d{4}-\d{2}-\d{2}$/.test(inp.value)) {
+      inp.dataset.isoDate = inp.value;
+      const [y,m,d] = inp.value.split('-');
+      inp.value = `${m}/${d}/${y}`;
+    }
+    if (!inp.placeholder) inp.placeholder = 'mm/dd/yy · t · t+7 · w+1 · m+1';
+    inp.addEventListener('blur', _smartDateBlur);
+    inp.addEventListener('keydown', e => { if(e.key==='Enter'){e.preventDefault();inp.blur();} });
+    inp.addEventListener('focus',  () => { inp.style.borderColor=''; });
+  });
+}
+
+// Auto-enhance any date inputs added to the DOM (modals, detail panes, inline forms)
+new MutationObserver(mutations => {
+  for (const mut of mutations) {
+    for (const node of mut.addedNodes) {
+      if (node.nodeType !== 1) continue;
+      if (node.matches('input[type="date"]')) initSmartDates(node.parentElement);
+      else initSmartDates(node);
+    }
+  }
+}).observe(document.body, { childList: true, subtree: true });
+
 /* ── Modal helpers ───────────────────────────────────────── */
 function openModal(overlayEl) {
   overlayEl.classList.add('open');
@@ -189,9 +271,10 @@ function createModal(title, bodyHTML, onSubmit, submitLabel = 'Save') {
       </div>
     </div>`;
 
-  overlay.querySelector('.modal-close').addEventListener('click', () => closeModal(overlay));
-  overlay.querySelector('.modal-cancel-btn').addEventListener('click', () => closeModal(overlay));
-  overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(overlay); });
+  const _dismiss = () => { closeModal(overlay); overlay.remove(); };
+  overlay.querySelector('.modal-close').addEventListener('click', _dismiss);
+  overlay.querySelector('.modal-cancel-btn').addEventListener('click', _dismiss);
+  overlay.addEventListener('click', e => { if (e.target === overlay) _dismiss(); });
   overlay.querySelector('.modal-submit-btn').addEventListener('click', () => onSubmit(overlay));
 
   document.body.appendChild(overlay);

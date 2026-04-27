@@ -19,7 +19,9 @@ class TagUpdate(BaseModel):
 @router.get("")
 def list_tags():
     conn = database.get_connection()
-    rows = conn.execute("SELECT * FROM tags ORDER BY is_default DESC, name ASC").fetchall()
+    rows = conn.execute(
+        "SELECT * FROM tags WHERE is_system = 0 OR is_system IS NULL ORDER BY is_default DESC, name ASC"
+    ).fetchall()
     conn.close()
     return {"items": [dict(r) for r in rows], "total": len(rows)}
 
@@ -27,7 +29,9 @@ def list_tags():
 @router.post("", status_code=201)
 def create_tag(body: TagCreate):
     conn = database.get_connection()
-    count = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
+    count = conn.execute(
+        "SELECT COUNT(*) FROM tags WHERE is_system = 0 OR is_system IS NULL"
+    ).fetchone()[0]
     if count >= 15:
         conn.close()
         raise HTTPException(status_code=400, detail="Maximum of 15 tags reached.")
@@ -71,6 +75,9 @@ def delete_tag(tag_id: int):
     if row["is_default"]:
         conn.close()
         raise HTTPException(status_code=400, detail="Cannot delete a default tag.")
+    if row["is_system"]:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Cannot delete a system tag.")
     conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
     conn.commit()
     conn.close()

@@ -6,8 +6,9 @@ import config
 
 def get_connection():
     os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -177,6 +178,13 @@ def init_db():
             PRIMARY KEY (note_id, tag_id)
         );
 
+        CREATE TABLE IF NOT EXISTS high_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game TEXT NOT NULL,
+            score INTEGER NOT NULL DEFAULT 0,
+            achieved_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS media (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -188,6 +196,126 @@ def init_db():
             genre TEXT,
             started_at TEXT,
             completed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS trips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            destination TEXT,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Planning',
+            color TEXT NOT NULL DEFAULT 'blue',
+            tag_id INTEGER REFERENCES tags(id),
+            flight_confirmation TEXT,
+            hotel_confirmation TEXT,
+            car_rental TEXT,
+            address TEXT,
+            emergency_contact TEXT,
+            passport_notes TEXT,
+            custom_field_1_label TEXT,
+            custom_field_1_value TEXT,
+            custom_field_2_label TEXT,
+            custom_field_2_value TEXT,
+            budget_total REAL,
+            budget_currency TEXT NOT NULL DEFAULT 'USD',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS trip_attendees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            is_me INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS packing_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS packing_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL REFERENCES packing_categories(id) ON DELETE CASCADE,
+            trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            checked INTEGER NOT NULL DEFAULT 0,
+            for_attendee_id INTEGER REFERENCES trip_attendees(id) ON DELETE SET NULL,
+            note TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS packing_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS template_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL REFERENCES packing_templates(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS template_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_category_id INTEGER NOT NULL REFERENCES template_categories(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            always_bring INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS template_suggested_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL REFERENCES packing_templates(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            priority TEXT NOT NULL DEFAULT 'medium',
+            days_before_departure INTEGER,
+            notes TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS budget_expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            amount REAL NOT NULL,
+            category TEXT NOT NULL DEFAULT 'Other',
+            description TEXT,
+            expense_date TEXT,
+            paid_by TEXT NOT NULL DEFAULT 'shared',
+            phase TEXT NOT NULL DEFAULT 'in_trip',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS budget_splits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            expense_id INTEGER NOT NULL REFERENCES budget_expenses(id) ON DELETE CASCADE,
+            attendee_id INTEGER NOT NULL REFERENCES trip_attendees(id) ON DELETE CASCADE,
+            amount REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS itinerary_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            entry_date TEXT NOT NULL,
+            entry_type TEXT NOT NULL DEFAULT 'Activity',
+            title TEXT NOT NULL,
+            start_time TEXT,
+            end_time TEXT,
+            location TEXT,
+            confirmation_number TEXT,
+            notes TEXT,
+            attendee_scope TEXT NOT NULL DEFAULT 'all',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            journal_note TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
@@ -246,6 +374,34 @@ def init_db():
     # Migration: add task_id to events
     try:
         conn.execute("ALTER TABLE events ADD COLUMN task_id INTEGER REFERENCES tasks(id)")
+    except Exception:
+        pass
+    # Migration: add end_date to task_recurrences
+    try:
+        conn.execute("ALTER TABLE task_recurrences ADD COLUMN end_date TEXT")
+    except Exception:
+        pass
+    # Migration: add is_system to tags
+    try:
+        conn.execute("ALTER TABLE tags ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    # Migration: add trip_id to notes
+    try:
+        conn.execute("ALTER TABLE notes ADD COLUMN trip_id INTEGER REFERENCES trips(id)")
+    except Exception:
+        pass
+    # Migration: add itinerary_day_notes table
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS itinerary_day_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                entry_date TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                UNIQUE(trip_id, entry_date)
+            )
+        """)
     except Exception:
         pass
     conn.commit()

@@ -10,6 +10,7 @@ class NoteCreate(BaseModel):
     title: str = "Untitled"
     content: Optional[str] = None
     tag_ids: Optional[List[int]] = []
+    trip_id: Optional[int] = None
 
 
 class NoteUpdate(BaseModel):
@@ -49,15 +50,18 @@ def _note_full(note_id, conn):
 
 
 @router.get("")
-def list_notes(q: Optional[str] = None, tag_id: Optional[int] = None):
+def list_notes(q: Optional[str] = None, tag_id: Optional[int] = None, trip_id: Optional[int] = None):
     conn = database.get_connection()
     conditions, params = [], []
     if q:
-        conditions.append("(title LIKE ? OR content LIKE ?)")
+        conditions.append("(n.title LIKE ? OR n.content LIKE ?)")
         params += [f"%{q}%", f"%{q}%"]
     if tag_id:
         conditions.append("n.id IN (SELECT note_id FROM note_tags WHERE tag_id = ?)")
         params.append(tag_id)
+    if trip_id is not None:
+        conditions.append("n.trip_id = ?")
+        params.append(trip_id)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     rows = conn.execute(
         f"SELECT n.* FROM notes n {where} ORDER BY n.pinned DESC, n.updated_at DESC",
@@ -80,8 +84,8 @@ def list_notes(q: Optional[str] = None, tag_id: Optional[int] = None):
 def create_note(body: NoteCreate):
     conn = database.get_connection()
     row = conn.execute(
-        "INSERT INTO notes (title, content) VALUES (?, ?) RETURNING *",
-        (body.title, body.content)
+        "INSERT INTO notes (title, content, trip_id) VALUES (?, ?, ?) RETURNING *",
+        (body.title, body.content, body.trip_id)
     ).fetchone()
     note_id = row["id"]
     for tid in (body.tag_ids or []):
