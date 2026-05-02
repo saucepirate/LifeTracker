@@ -377,6 +377,8 @@ def update_milestone(goal_id: int, ms_id: int, body: MilestoneUpdate):
         fields['metric_id'] = None
     elif body.metric_id is not None:
         fields['metric_id'] = body.metric_id
+    if body.is_pinned is not None:
+        fields['is_pinned'] = body.is_pinned
 
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)
@@ -386,6 +388,23 @@ def update_milestone(goal_id: int, ms_id: int, body: MilestoneUpdate):
         )
 
     _recalc_progress(goal_id, conn)
+    conn.commit()
+    goal = _goal_full(conn, goal_id)
+    conn.close()
+    return goal
+
+
+@router.post("/{goal_id}/milestones/{ms_id}/pin")
+def toggle_milestone_pin(goal_id: int, ms_id: int):
+    conn = database.get_connection()
+    row = conn.execute(
+        "SELECT is_pinned FROM goal_milestones WHERE id = ? AND goal_id = ?", (ms_id, goal_id)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Milestone not found.")
+    new_val = 0 if row['is_pinned'] else 1
+    conn.execute("UPDATE goal_milestones SET is_pinned = ? WHERE id = ?", (new_val, ms_id))
     conn.commit()
     goal = _goal_full(conn, goal_id)
     conn.close()
@@ -457,6 +476,8 @@ def update_metric(goal_id: int, metric_id: int, body: MetricUpdate):
         fields['target_date'] = None
     elif body.target_date is not None:
         fields['target_date'] = body.target_date
+    if body.is_pinned is not None:
+        fields['is_pinned'] = body.is_pinned
 
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)
@@ -466,6 +487,23 @@ def update_metric(goal_id: int, metric_id: int, body: MetricUpdate):
         )
 
     _recalc_progress(goal_id, conn)
+    conn.commit()
+    goal = _goal_full(conn, goal_id)
+    conn.close()
+    return goal
+
+
+@router.post("/{goal_id}/metrics/{met_id}/pin")
+def toggle_metric_pin(goal_id: int, met_id: int):
+    conn = database.get_connection()
+    row = conn.execute(
+        "SELECT is_pinned FROM goal_metrics WHERE id = ? AND goal_id = ?", (met_id, goal_id)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Metric not found.")
+    new_val = 0 if row['is_pinned'] else 1
+    conn.execute("UPDATE goal_metrics SET is_pinned = ? WHERE id = ?", (new_val, met_id))
     conn.commit()
     goal = _goal_full(conn, goal_id)
     conn.close()

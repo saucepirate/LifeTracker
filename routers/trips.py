@@ -63,6 +63,26 @@ def _trip_summary(conn, row, today=None):
         "SELECT COALESCE(SUM(amount), 0) FROM budget_expenses WHERE trip_id = ? AND phase = 'in_trip'",
         (t['id'],)
     ).fetchone()[0]
+    t['budget'] = t.get('budget_total') or 0
+
+    next_rows = conn.execute(
+        "SELECT title, entry_date, start_time FROM itinerary_entries WHERE trip_id = ? AND entry_date >= ? ORDER BY entry_date ASC, start_time ASC LIMIT 8",
+        (t['id'], today)
+    ).fetchall()
+    t['next_entries'] = [dict(r) for r in next_rows]
+    if next_rows:
+        t['next_action'] = next_rows[0]['title']
+        t['next_action_date'] = next_rows[0]['entry_date']
+    elif t.get('tag_id'):
+        next_task = conn.execute(
+            "SELECT t2.title FROM tasks t2 JOIN task_tags tt ON tt.task_id = t2.id WHERE tt.tag_id = ? AND t2.status = 'pending' ORDER BY CASE t2.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END LIMIT 1",
+            (t['tag_id'],)
+        ).fetchone()
+        t['next_action'] = next_task['title'] if next_task else None
+        t['next_action_date'] = None
+    else:
+        t['next_action'] = None
+        t['next_action_date'] = None
 
     return t
 
@@ -198,6 +218,22 @@ def update_trip(trip_id: int, body: TripUpdate):
     trip = _trip_full(conn, trip_id)
     conn.close()
     return trip
+
+
+@router.post("/{trip_id}/highlight")
+def toggle_highlight(trip_id: int):
+    conn = database.get_connection()
+    row = conn.execute("SELECT is_highlighted FROM trips WHERE id = ?", (trip_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found.")
+    was_on = bool(row['is_highlighted'])
+    conn.execute("UPDATE trips SET is_highlighted = 0")
+    if not was_on:
+        conn.execute("UPDATE trips SET is_highlighted = 1 WHERE id = ?", (trip_id,))
+    conn.commit()
+    conn.close()
+    return {"is_highlighted": not was_on}
 
 
 @router.delete("/{trip_id}", status_code=204)

@@ -82,7 +82,10 @@ function formatDate(iso) {
 
 function formatDateShort(iso) {
   if (!iso) return '';
-  const d = new Date(iso + 'T00:00:00');
+  // Strip any time component so values like "2026-05-01T00:00:00" still parse
+  const datePart = String(iso).slice(0, 10);
+  const d = new Date(datePart + 'T00:00:00');
+  if (isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
@@ -275,7 +278,10 @@ function createModal(title, bodyHTML, onSubmit, submitLabel = 'Save') {
   overlay.querySelector('.modal-close').addEventListener('click', _dismiss);
   overlay.querySelector('.modal-cancel-btn').addEventListener('click', _dismiss);
   overlay.addEventListener('click', e => { if (e.target === overlay) _dismiss(); });
-  overlay.querySelector('.modal-submit-btn').addEventListener('click', () => onSubmit(overlay));
+  overlay.querySelector('.modal-submit-btn').addEventListener('click', async () => {
+    const result = await onSubmit(overlay);
+    if (result !== false) _dismiss();
+  });
 
   document.body.appendChild(overlay);
   return overlay;

@@ -6,6 +6,7 @@ let _calData = {};
 let _selectedDate = null;
 let _calNotes = [];
 let _calTasks = [];
+let _calTags  = [];
 let _calGridStart = null;
 let _calGridEnd = null;
 let _calWeekEnd = null;
@@ -17,7 +18,7 @@ let _calDayDate = null;
 
 const CAL_HOUR_START = 7;
 const CAL_HOUR_END = 21;
-const CAL_HOUR_HEIGHT = 52;
+const CAL_HOUR_HEIGHT = 60;
 
 // ── Entry ────────────────────────────────────────────────────────────────────
 registerPage('calendar', async function(content) {
@@ -126,21 +127,24 @@ registerPage('calendar', async function(content) {
 // ── Meta ─────────────────────────────────────────────────────────────────────
 async function calLoadMeta() {
   try {
-    const [notes, tasks, goals, trips] = await Promise.all([
+    const [notes, tasks, goals, trips, tags] = await Promise.all([
       apiFetch('GET', '/notes'),
       apiFetch('GET', '/tasks?status=pending'),
       apiFetch('GET', '/goals'),
       apiFetch('GET', '/trips').catch(() => ({ upcoming: [], planning: [], past: [] })),
+      apiFetch('GET', '/tags').catch(() => ({ items: [] })),
     ]);
     _calNotes = Array.isArray(notes) ? notes : (notes.items || []);
     _calTasks = Array.isArray(tasks) ? tasks : (tasks.items || []);
     _calGoals = Array.isArray(goals) ? goals : (goals.items || []);
     _calTrips = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
+    _calTags  = Array.isArray(tags)  ? tags  : (tags.items  || []);
   } catch(e) {
     _calNotes = [];
     _calTasks = [];
     _calGoals = [];
     _calTrips = [];
+    _calTags  = [];
   }
   // Populate trip dropdown
   const sel = document.getElementById('cal-trip-filter');
@@ -308,14 +312,32 @@ function renderMonthGrid(gridStart, gridEnd) {
     shown.forEach(item => {
       const label = item.type === 'metric' ? (item.obj.label || 'Target') : item.obj.title;
       let pillClass = 'cal-item-pill';
-      if (item.type === 'event') pillClass += ' pill-event';
+      let pillBody = esc(label);
+      let tip = label;
+
+      if (item.type === 'event') {
+        pillClass += ' pill-event';
+        if (item.obj.tag_color) pillClass += ' tag-' + item.obj.tag_color;
+        const ev = item.obj;
+        if (!ev.all_day && ev.start_time) {
+          const dur = ev.end_time ? calFmtDuration(ev.start_time, ev.end_time) : '';
+          const recur = (ev.recurrence_cadence || ev._is_recurrence) ? ' ↺' : '';
+          pillBody = `<span class="cal-pill-time">${calShortTime(ev.start_time)}</span> ${esc(ev.title)}${recur}`;
+          tip = `${ev.title}\n${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}${dur ? ` (${dur})` : ''}`;
+        } else {
+          const recur = (ev.recurrence_cadence || ev._is_recurrence) ? ' ↺' : '';
+          pillBody = `${esc(ev.title)}${recur}`;
+          tip = `${ev.title}\nAll day`;
+        }
+      }
       else if (item.type === 'task') {
         if (item.obj.status === 'completed') pillClass += ' pill-task-done';
         else pillClass += iso < today ? ' pill-task-high' : ' pill-task';
       }
       else if (item.type === 'milestone') pillClass += ' pill-milestone';
       else pillClass += ' pill-metric';
-      pillsHtml += `<div class="${pillClass}" title="${esc(label)}">${esc(label)}</div>`;
+
+      pillsHtml += `<div class="${pillClass}" title="${esc(tip)}">${pillBody}</div>`;
     });
     if (overflow > 0) {
       pillsHtml += `<div class="cal-overflow-chip">+${overflow} more</div>`;
@@ -381,14 +403,14 @@ function openDayPanel(dateStr) {
   let evHtml = '';
   if (events.length) {
     events.forEach(ev => {
-      const timeStr = ev.all_day ? 'All day' : `${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}`;
+      const timeStr = (ev.all_day ? 'All day' : `${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}`) + (ev.recurrence_cadence || ev._is_recurrence ? ' <span style="color:var(--text-muted)" title="Recurring">↺</span>' : '');
       const noteBtn = ev.note_id
         ? `<button class="btn btn-secondary btn-sm cal-note-link-btn" data-note-id="${ev.note_id}" title="Open linked note">&#8594; Note</button>`
         : '';
       const taskChip = ev.task_title
         ? `<span class="badge" style="background:var(--bg-input);color:var(--text-muted);font-size:11px">&#9679; ${esc(ev.task_title)}</span>`
         : '';
-      evHtml += `<div class="cal-event-card" data-event-id="${ev.id}">
+      evHtml += `<div class="cal-event-card${ev.tag_color ? ' tag-'+ev.tag_color : ''}" data-event-id="${ev.id}"
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px">
           <div style="flex:1;min-width:0">
             <div class="cal-event-title">${esc(ev.title)}</div>
@@ -616,7 +638,7 @@ function renderDayView(dateStr) {
   if (events.length) {
     inner += `<div class="cal-section-label">Events</div>`;
     events.forEach(ev => {
-      const timeStr = ev.all_day ? 'All day' : `${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}`;
+      const timeStr = (ev.all_day ? 'All day' : `${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}`) + (ev.recurrence_cadence || ev._is_recurrence ? ' <span style="color:var(--text-muted)" title="Recurring">↺</span>' : '');
       const noteBtn = ev.note_id
         ? `<button class="btn btn-secondary btn-sm cal-note-link-btn" data-note-id="${ev.note_id}">&#8594; Note</button>`
         : '';
@@ -834,19 +856,32 @@ function renderWeekGrid(weekStart, weekEnd) {
       const duration = Math.max(0.5, (eh - sh) + (em - sm) / 60);
       const height = duration * CAL_HOUR_HEIGHT;
       if (startOffset < 0 || sh < CAL_HOUR_START) return;
-      timedEventsHtml += `<div class="cal-timed-event" data-event-id="${ev.id}" data-date="${iso}"
+      const tagCls = ev.tag_color ? ` tag-${ev.tag_color}` : '';
+      timedEventsHtml += `<div class="cal-timed-event${tagCls}" data-event-id="${ev.id}" data-date="${iso}"
         style="top:${startOffset}px;height:${height - 2}px;left:calc(${(colIdx / 7) * 100}% + 2px);width:calc(${100 / 7}% - 4px)">
-        <div style="font-weight:600;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ev.title)}</div>
-        <div style="font-size:10px;opacity:.75">${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}</div>
+        <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ev.title)}${(ev.recurrence_cadence || ev._is_recurrence) ? ' ↺' : ''}</div>
+        <div style="font-size:12px;opacity:.85">${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}</div>
       </div>`;
     });
+
+    // "Now" line — only render when today is in this week and current time is in our hour window
+    const todayIdx = days.indexOf(today);
+    let nowLineHtml = '';
+    if (todayIdx >= 0) {
+      const now = new Date();
+      const ch = now.getHours(), cm = now.getMinutes();
+      if (ch >= CAL_HOUR_START && ch < CAL_HOUR_END) {
+        const nowY = (ch - CAL_HOUR_START) * CAL_HOUR_HEIGHT + (cm / 60 * CAL_HOUR_HEIGHT);
+        nowLineHtml = `<div class="cal-now-line" style="top:${nowY}px;left:calc(${(todayIdx / 7) * 100}%);width:calc(${100 / 7}%)"></div>`;
+      }
+    }
     timeGridHtml = `
       <div class="cal-week-body-scroll">
         <div class="cal-week-body" style="position:relative">
           <div class="cal-week-time-grid">${hoursHtml}</div>
-          <div class="cal-week-events-overlay" style="position:absolute;top:0;left:48px;right:0;bottom:0;pointer-events:none">
+          <div class="cal-week-events-overlay" style="position:absolute;top:0;left:60px;right:0;bottom:0;pointer-events:none">
             <div style="position:relative;height:${(CAL_HOUR_END - CAL_HOUR_START) * CAL_HOUR_HEIGHT}px;pointer-events:auto">
-              ${timedEventsHtml}
+              ${timedEventsHtml}${nowLineHtml}
             </div>
           </div>
         </div>
@@ -912,6 +947,7 @@ function renderWeekGrid(weekStart, weekEnd) {
 // ── Event modal ───────────────────────────────────────────────────────────────
 function openEventModal(date, time, existing) {
   const isEdit = !!existing;
+  // If editing a recurrence occurrence, fetch master fields from the master id (existing.id is master)
   const title = isEdit ? 'Edit Event' : 'New Event';
 
   const noteOptions = _calNotes.map(n =>
@@ -921,54 +957,144 @@ function openEventModal(date, time, existing) {
     `<option value="${t.id}"${existing?.task_id === t.id ? ' selected' : ''}>${esc(t.title)}</option>`
   ).join('');
 
-  const allDay = existing ? existing.all_day : !time;
-  const startTime = existing?.start_time || time || '';
-  const endTime = existing?.end_time || (time ? calAddHour(time) : '');
+  const allDay   = existing ? existing.all_day : !time;
+  // Round any provided time down to the nearest 15-minute slot
+  const snap15   = (t) => {
+    if (!t) return '';
+    const [h, m] = t.split(':').map(Number);
+    return `${String(h).padStart(2,'0')}:${String(Math.floor(m/15)*15).padStart(2,'0')}`;
+  };
+  const startTime = snap15(existing?.start_time || time || '09:00');
+  const endTime   = snap15(existing?.end_time || (time ? calAddHour(time) : '10:00'));
+
+  const fmt12 = (t24) => {
+    const [h, m] = t24.split(':').map(Number);
+    const pd = h < 12 ? 'AM' : 'PM';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${h12}:${String(m).padStart(2,'0')} ${pd}`;
+  };
+  const timeOpts = (sel) => {
+    let html = '';
+    for (let h = 0; h < 24; h++) {
+      for (let m = 0; m < 60; m += 15) {
+        const v = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+        html += `<option value="${v}"${v === sel ? ' selected' : ''}>${fmt12(v)}</option>`;
+      }
+    }
+    return html;
+  };
+
+  const rec       = existing && existing.recurrence_cadence ? existing : null;
+  const recOn     = !!rec;
+  const recCad    = rec?.recurrence_cadence || 'weekly';
+  const recIntvl  = rec?.recurrence_interval || 1;
+  const recUntil  = rec?.recurrence_until || '';
+  const baseDate  = existing?.date || date || new Date().toISOString().slice(0,10);
+  const baseDow   = (() => {
+    try { return (new Date(baseDate + 'T00:00:00').getDay() + 6) % 7; } catch(e) { return 0; }
+  })();
+  const recDow    = rec?.recurrence_days_of_week || (recCad === 'weekly' ? [baseDow] : []);
+  const dowSet    = new Set(recDow);
+  const DOW_LBL   = ['M','T','W','T','F','S','S'];
+  const dowPills  = DOW_LBL.map((lbl, i) =>
+    `<button type="button" class="ev-dow-pill${dowSet.has(i) ? ' selected' : ''}" data-dow="${i}">${lbl}</button>`
+  ).join('');
+
+  const editDateVal = existing?._master_date || existing?.date || date || '';
+  const recurBanner = (isEdit && (existing?.recurrence_cadence || existing?._is_recurrence))
+    ? `<div style="font-size:12px;color:#FFB800;background:rgba(255,184,0,0.08);border:1px solid rgba(255,184,0,0.3);border-radius:6px;padding:6px 10px;margin-bottom:12px">↺ Recurring event — changes apply to all occurrences.</div>`
+    : '';
+
+  // Tag picker pills: "no tag" + each tag colored by its tag color class
+  const currentTagId = existing?.tag_id ?? null;
+  const tagPillsHTML = `
+    <button type="button" class="ev-tag-pill ev-tag-none${currentTagId == null ? ' selected' : ''}" data-tag-id="">No tag</button>
+    ${_calTags.map(t => {
+      const sel = currentTagId === t.id ? ' selected' : '';
+      return `<button type="button" class="ev-tag-pill tag-${t.color}${sel}" data-tag-id="${t.id}">${esc(t.name)}</button>`;
+    }).join('')}`;
 
   const bodyHTML = `
+    ${recurBanner}
     <div class="form-group">
       <label class="form-label">Title</label>
       <input class="form-input" id="ev-title" type="text" value="${esc(existing?.title || '')}" placeholder="Event title" />
     </div>
     <div class="form-group">
-      <label class="form-label">Date</label>
-      <input class="form-input" id="ev-date" type="date" value="${existing?.date || date || ''}" />
+      <label class="form-label">Tag <span style="color:var(--text-muted);font-weight:400">(controls color)</span></label>
+      <div class="ev-tag-pills" id="ev-tag-pills">${tagPillsHTML}</div>
     </div>
     <div class="form-group">
-      <label class="form-label">End date <span style="color:var(--text-muted);font-weight:400">(optional, for multi-day)</span></label>
+      <label class="form-label">Date${(existing?._is_recurrence) ? ' <span style="color:var(--text-muted);font-weight:400">(series start)</span>' : ''}</label>
+      <input class="form-input" id="ev-date" type="date" value="${editDateVal}" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">End date <span style="color:var(--text-muted);font-weight:400">(optional, multi-day)</span></label>
       <input class="form-input" id="ev-end-date" type="date" value="${existing?.end_date || ''}" />
     </div>
-    <div class="form-group" style="flex-direction:row;align-items:center;gap:8px">
-      <input type="checkbox" id="ev-allday"${allDay ? ' checked' : ''} style="width:16px;height:16px;accent-color:var(--color-accent)">
-      <label class="form-label" for="ev-allday" style="margin:0">All day</label>
+    <div class="form-group ev-checkbox-row">
+      <input type="checkbox" id="ev-allday"${allDay ? ' checked' : ''}>
+      <label class="form-label" for="ev-allday">All day</label>
     </div>
-    <div id="ev-time-fields" style="${allDay ? 'display:none' : ''}">
-      <div class="form-group">
-        <label class="form-label">Start time</label>
-        <input class="form-input" id="ev-start-time" type="time" value="${startTime}" />
+    <div id="ev-time-fields" style="${allDay ? 'display:none' : 'display:block'}">
+      <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label class="form-label" style="font-size:12px">Start time</label>
+          <select class="form-select" id="ev-start-time">${timeOpts(startTime)}</select>
+        </div>
+        <div>
+          <label class="form-label" style="font-size:12px">End time</label>
+          <select class="form-select" id="ev-end-time">${timeOpts(endTime)}</select>
+        </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">End time</label>
-        <input class="form-input" id="ev-end-time" type="time" value="${endTime}" />
+    </div>
+    <div class="form-group ev-checkbox-row">
+      <input type="checkbox" id="ev-recurring"${recOn ? ' checked' : ''}>
+      <label class="form-label" for="ev-recurring">↺ Repeat</label>
+    </div>
+    <div id="ev-rec-fields" style="${recOn ? 'display:block' : 'display:none'};padding:10px;background:var(--bg-hover);border-radius:var(--radius-el);margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div>
+          <label class="form-label" style="font-size:11px">Repeats</label>
+          <select class="form-select" id="ev-rec-cadence">
+            <option value="daily"${recCad==='daily'?' selected':''}>Daily</option>
+            <option value="weekly"${recCad==='weekly'?' selected':''}>Weekly</option>
+            <option value="monthly"${recCad==='monthly'?' selected':''}>Monthly</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label" style="font-size:11px">Every</label>
+          <input class="form-input" id="ev-rec-interval" type="number" min="1" value="${recIntvl}" />
+        </div>
+      </div>
+      <div id="ev-rec-dow-row" style="${recCad === 'weekly' ? 'display:block' : 'display:none'};margin-bottom:10px">
+        <label class="form-label" style="font-size:11px">On days</label>
+        <div class="ev-dow-pills">${dowPills}</div>
+      </div>
+      <div>
+        <label class="form-label" style="font-size:11px">End date <span style="color:var(--text-muted)">(optional)</span></label>
+        <input class="form-input" id="ev-rec-until" type="date" value="${recUntil}" />
       </div>
     </div>
     <div class="form-group">
       <label class="form-label">Notes</label>
       <textarea class="form-input" id="ev-notes" rows="2" placeholder="Optional notes">${esc(existing?.notes || '')}</textarea>
     </div>
-    <div class="form-group">
-      <label class="form-label">Link to note</label>
-      <select class="form-select" id="ev-note-id">
-        <option value="">— none —</option>
-        ${noteOptions}
-      </select>
-    </div>
-    <div class="form-group">
-      <label class="form-label">Link to task</label>
-      <select class="form-select" id="ev-task-id">
-        <option value="">— none —</option>
-        ${taskOptions}
-      </select>
+    <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div>
+        <label class="form-label" style="font-size:12px">Link to note</label>
+        <select class="form-select" id="ev-note-id">
+          <option value="">— none —</option>
+          ${noteOptions}
+        </select>
+      </div>
+      <div>
+        <label class="form-label" style="font-size:12px">Link to task</label>
+        <select class="form-select" id="ev-task-id">
+          <option value="">— none —</option>
+          ${taskOptions}
+        </select>
+      </div>
     </div>`;
 
   const modal = createModal(title, bodyHTML, async () => {
@@ -983,10 +1109,26 @@ function openEventModal(date, time, existing) {
     const notesVal = document.getElementById('ev-notes').value.trim() || null;
     const noteIdVal = document.getElementById('ev-note-id').value ? parseInt(document.getElementById('ev-note-id').value) : null;
     const taskIdVal = document.getElementById('ev-task-id').value ? parseInt(document.getElementById('ev-task-id').value) : null;
+    const tagBtn   = modal.querySelector('.ev-tag-pill.selected');
+    const tagIdVal = tagBtn?.dataset.tagId ? parseInt(tagBtn.dataset.tagId) : null;
+
+    const recurringVal = document.getElementById('ev-recurring').checked;
+    let recCadence = null, recInterval = 1, recDow = null, recUntil = null;
+    if (recurringVal) {
+      recCadence = document.getElementById('ev-rec-cadence').value;
+      recInterval = parseInt(document.getElementById('ev-rec-interval').value) || 1;
+      recUntil = getDateVal(document.getElementById('ev-rec-until')) || null;
+      if (recCadence === 'weekly') {
+        recDow = [...modal.querySelectorAll('.ev-dow-pill.selected')].map(p => parseInt(p.dataset.dow));
+        if (!recDow.length) { alert('Pick at least one day of the week.'); return false; }
+      }
+    }
 
     try {
       let savedEvent;
-      if (isEdit) {
+      // For an occurrence we edit the master row (use _master_id if present)
+      const editId = existing?._master_id || existing?.id;
+      if (isEdit && editId) {
         const body = {
           title: titleVal,
           date: dateVal,
@@ -999,23 +1141,30 @@ function openEventModal(date, time, existing) {
           note_id: noteIdVal,
           clear_task_id: taskIdVal === null,
           task_id: taskIdVal,
+          clear_tag_id: tagIdVal === null,
+          tag_id: tagIdVal,
+          clear_recurrence: !recurringVal,
+          recurrence_cadence: recurringVal ? recCadence : null,
+          recurrence_interval: recurringVal ? recInterval : null,
+          recurrence_days_of_week: recurringVal ? recDow : null,
+          recurrence_until: recurringVal ? recUntil : null,
         };
-        savedEvent = await apiFetch('PUT', `/calendar/events/${existing.id}`, body);
-        calRemoveEventFromData(existing.id);
+        savedEvent = await apiFetch('PUT', `/calendar/events/${editId}`, body);
+        calRemoveEventFromData(editId);
       } else {
         savedEvent = await apiFetch('POST', `/calendar/events`, {
           title: titleVal, date: dateVal, end_date: endDateVal,
           all_day: allDayVal, start_time: startTimeVal, end_time: endTimeVal,
-          notes: notesVal, note_id: noteIdVal, task_id: taskIdVal,
+          notes: notesVal, note_id: noteIdVal, task_id: taskIdVal, tag_id: tagIdVal,
+          recurrence_cadence: recurringVal ? recCadence : null,
+          recurrence_interval: recurringVal ? recInterval : null,
+          recurrence_days_of_week: recurringVal ? recDow : null,
+          recurrence_until: recurringVal ? recUntil : null,
         });
       }
-      calAddEventToData(savedEvent);
-      if (_calView === 'month') {
-        renderMonthGrid(null, null, true);
-        if (_selectedDate) openDayPanel(_selectedDate);
-      } else {
-        await calLoadAndRender();
-      }
+      // Recurring saves can change occurrences across the visible range — full reload is safer
+      await calLoadAndRender();
+      if (_calView === 'month' && _selectedDate) openDayPanel(_selectedDate);
     } catch(e) {
       alert('Failed to save event.');
       return false;
@@ -1023,7 +1172,22 @@ function openEventModal(date, time, existing) {
   }, isEdit ? 'Save' : 'Create');
 
   modal.querySelector('#ev-allday').addEventListener('change', function() {
-    document.getElementById('ev-time-fields').style.display = this.checked ? 'none' : '';
+    modal.querySelector('#ev-time-fields').style.display = this.checked ? 'none' : 'block';
+  });
+  modal.querySelector('#ev-recurring').addEventListener('change', function() {
+    modal.querySelector('#ev-rec-fields').style.display = this.checked ? 'block' : 'none';
+  });
+  modal.querySelector('#ev-rec-cadence').addEventListener('change', function() {
+    modal.querySelector('#ev-rec-dow-row').style.display = this.value === 'weekly' ? 'block' : 'none';
+  });
+  modal.querySelectorAll('.ev-dow-pill').forEach(p => {
+    p.addEventListener('click', () => p.classList.toggle('selected'));
+  });
+  modal.querySelectorAll('.ev-tag-pill').forEach(p => {
+    p.addEventListener('click', () => {
+      modal.querySelectorAll('.ev-tag-pill').forEach(x => x.classList.remove('selected'));
+      p.classList.add('selected');
+    });
   });
 
   openModal(modal);
@@ -1172,6 +1336,29 @@ function calFmtTime(t) {
   const ampm = h >= 12 ? 'PM' : 'AM';
   const hh = h % 12 || 12;
   return `${hh}:${String(m).padStart(2,'0')} ${ampm}`;
+}
+
+// Compact time: "9a", "9:30a", "12p", "2:30p"
+function calShortTime(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  const hh = h % 12 || 12;
+  const ap = h < 12 ? 'a' : 'p';
+  return m === 0 ? `${hh}${ap}` : `${hh}:${String(m).padStart(2,'0')}${ap}`;
+}
+
+// Pretty duration: 90min -> "1h 30m"; 60 -> "1h"; 30 -> "30m"
+function calFmtDuration(start, end) {
+  if (!start || !end) return '';
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  if (mins <= 0) return '';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
 }
 
 function calAddHour(t) {

@@ -170,28 +170,144 @@ async function doQuickStatusChange(goalId, newStatus, confirmMsg) {
   } catch(e) { alert('Could not update goal: ' + e.message); }
 }
 
+function _calcGoalsHabitCompliance(activeGoals) {
+  const today    = todayISO();
+  const weekAgo  = (() => { const d = new Date(); d.setDate(d.getDate() - 6); return d.toISOString().slice(0,10); })();
+  let total = 0, count = 0;
+  activeGoals.forEach(g => {
+    (g.habits || []).forEach(h => {
+      const entries = h.log_entries || [];
+      const daysSet = new Set();
+      let totalMin = 0;
+      entries.forEach(e => {
+        const day = (e.logged_at || '').slice(0, 10);
+        if (day >= weekAgo && day <= today) {
+          daysSet.add(day);
+          if (e.value != null) totalMin += e.value;
+        }
+      });
+      const partial = [];
+      if (h.min_days_per_week)     partial.push(Math.min(100, (daysSet.size / h.min_days_per_week) * 100));
+      if (h.weekly_target_minutes) partial.push(Math.min(100, (totalMin    / h.weekly_target_minutes) * 100));
+      if (partial.length) { total += partial.reduce((a,b) => a+b, 0) / partial.length; count++; }
+    });
+  });
+  return count ? Math.round(total / count) : null;
+}
+
 function renderGStats() {
-  const today = todayISO();
-  const in7 = new Date(); in7.setDate(in7.getDate() + 7);
+  const today  = todayISO();
+  const in7    = new Date(); in7.setDate(in7.getDate() + 7);
   const in7ISO = in7.toISOString().slice(0, 10);
 
-  const active   = _goals.filter(g => g.status === 'active').length;
-  const onTrack  = _goals.filter(g => g.status === 'active' && g.is_on_track).length;
+  const activeGoals = _goals.filter(g => g.status === 'active');
+  const active      = activeGoals.length;
+  const onTrack     = activeGoals.filter(g => g.is_on_track).length;
 
-  let upcoming = 0, overdueMsCount = 0;
-  _goals.forEach(g => {
+  let upcomingCount = 0, overdueCount = 0, nextMs = null;
+  activeGoals.forEach(g => {
     (g.milestones || []).forEach(m => {
-      if (m.completed) return;
-      if (m.target_date && m.target_date < today) overdueMsCount++;
-      else if (m.target_date && m.target_date >= today && m.target_date <= in7ISO) upcoming++;
+      if (m.completed || !m.target_date) return;
+      if (m.target_date < today) overdueCount++;
+      else if (m.target_date <= in7ISO) {
+        upcomingCount++;
+        if (!nextMs || m.target_date < nextMs.target_date) nextMs = { ...m, goal_title: g.title };
+      }
     });
   });
 
-  document.getElementById('goals-stats').innerHTML = `
-    <div class="stat-card stat-card--blue"><div class="stat-label">Active goals</div><div class="stat-value">${active}</div></div>
-    <div class="stat-card stat-card--green"><div class="stat-label">On track</div><div class="stat-value">${onTrack}</div></div>
-    <div class="stat-card stat-card--amber"><div class="stat-label">Milestones due soon</div><div class="stat-value">${upcoming}</div></div>
-    <div class="stat-card stat-card--red"><div class="stat-label">Overdue milestones</div><div class="stat-value${overdueMsCount > 0 ? ' danger' : ''}">${overdueMsCount}</div></div>`;
+  const compliance  = _calcGoalsHabitCompliance(activeGoals);
+  const longestStreak = activeGoals.reduce((max, g) => Math.max(max, g.current_streak || 0), 0);
+  const streakGoal    = activeGoals.find(g => g.current_streak === longestStreak);
+  const avgProgress   = active ? Math.round(activeGoals.reduce((s, g) => s + (g.progress_pct || 0), 0) / active) : 0;
+  const topGoal       = [...activeGoals].sort((a,b) => (b.progress_pct||0) - (a.progress_pct||0))[0];
+  const offTrack      = active - onTrack;
+
+  // KPIs are picked dynamically. Always: goal-health, habit compliance.
+  // Slots 3 & 4 prefer attention-needing items first, then insights.
+  const kpis = [];
+
+  // Slot 1 — Goal health (always)
+  kpis.push({
+    label:  'Goal health',
+    value:  active ? `${onTrack}/${active}` : '—',
+    sub:    active ? 'on track' : 'no active goals',
+    accent: !active ? 'gray' : onTrack === active ? 'green' : onTrack >= active/2 ? 'amber' : 'red',
+  });
+
+  // Slot 2 — Habit compliance (always; compelling actionable insight)
+  kpis.push({
+    label:  'Habit compliance',
+    value:  compliance != null ? `${compliance}%` : '—',
+    sub:    compliance != null ? 'past 7 days' : 'no habits tracked',
+    accent: compliance == null ? 'gray' : compliance >= 75 ? 'green' : compliance >= 50 ? 'amber' : 'red',
+  });
+
+  // Slot 3 — Pick most actionable: overdue → off-track → longest streak → avg progress
+  if (overdueCount > 0) {
+    kpis.push({
+      label:  'Overdue milestones',
+      value:  overdueCount,
+      sub:    'needs attention',
+      accent: 'red',
+    });
+  } else if (offTrack > 0) {
+    kpis.push({
+      label:  'Off-track goals',
+      value:  offTrack,
+      sub:    'review habits & metrics',
+      accent: 'amber',
+    });
+  } else if (longestStreak >= 3 && streakGoal) {
+    kpis.push({
+      label:  'Best streak',
+      value:  `🔥 ${longestStreak}d`,
+      sub:    streakGoal.title.length > 22 ? streakGoal.title.slice(0,21) + '…' : streakGoal.title,
+      accent: 'amber',
+    });
+  } else {
+    kpis.push({
+      label:  'Avg progress',
+      value:  active ? `${avgProgress}%` : '—',
+      sub:    'across active goals',
+      accent: 'blue',
+    });
+  }
+
+  // Slot 4 — Pick most actionable: next ms → top goal → encouragement
+  if (upcomingCount > 0 && nextMs) {
+    const days = Math.ceil((new Date(nextMs.target_date + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
+    const dayLbl = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days}d`;
+    const title  = nextMs.title.length > 26 ? nextMs.title.slice(0,25) + '…' : nextMs.title;
+    kpis.push({
+      label:  'Next milestone',
+      value:  dayLbl,
+      sub:    title,
+      accent: days <= 2 ? 'red' : 'amber',
+    });
+  } else if (topGoal) {
+    const title = topGoal.title.length > 26 ? topGoal.title.slice(0,25) + '…' : topGoal.title;
+    kpis.push({
+      label:  'Top progress',
+      value:  `${Math.round(topGoal.progress_pct || 0)}%`,
+      sub:    title,
+      accent: 'green',
+    });
+  } else {
+    kpis.push({
+      label:  'Get started',
+      value:  '—',
+      sub:    'create your first goal',
+      accent: 'gray',
+    });
+  }
+
+  document.getElementById('goals-stats').innerHTML = kpis.map(k => `
+    <div class="stat-card stat-card--${k.accent}">
+      <div class="stat-label">${escHtml(k.label)}</div>
+      <div class="stat-value">${typeof k.value === 'string' ? escHtml(k.value) : k.value}</div>
+      ${k.sub ? `<div class="stat-sub">${escHtml(k.sub)}</div>` : ''}
+    </div>`).join('');
 }
 
 function renderGGrid() {
@@ -466,23 +582,53 @@ function renderGDetail(g) {
   const onTrackLabel = isDone ? capitalize(g.status) : (g.is_on_track ? '✓ On track' : '⚠ Off track');
   const pct = Math.round(g.progress_pct || 0);
 
+  // Hero stats: streak, days-to-target, completed milestones
+  const todayD = new Date(todayISO() + 'T00:00:00');
+  let heroChips = [];
+  if (g.target_date) {
+    const days = Math.ceil((new Date(g.target_date + 'T00:00:00') - todayD) / 86400000);
+    if (days < 0) {
+      heroChips.push(`<span class="d-g-hero-chip d-g-hero-chip--red">⚠ ${Math.abs(days)}d overdue</span>`);
+    } else if (days === 0) {
+      heroChips.push(`<span class="d-g-hero-chip d-g-hero-chip--amber">Due today</span>`);
+    } else {
+      heroChips.push(`<span class="d-g-hero-chip">📅 ${days}d to target</span>`);
+    }
+  }
+  if (g.current_streak > 0) {
+    heroChips.push(`<span class="d-g-hero-chip d-g-hero-chip--amber">🔥 ${g.current_streak}d streak${g.best_streak > g.current_streak ? ` · best ${g.best_streak}` : ''}</span>`);
+  }
+  const msTotal = (g.milestones || []).length;
+  const msDone  = (g.milestones || []).filter(m => m.completed).length;
+  if (msTotal) {
+    heroChips.push(`<span class="d-g-hero-chip">✓ ${msDone}/${msTotal} milestones</span>`);
+  }
+  const metTotal = (g.metrics || []).length;
+  const metDone  = (g.metrics || []).filter(m => m.completed).length;
+  if (metTotal) {
+    heroChips.push(`<span class="d-g-hero-chip">🎯 ${metDone}/${metTotal} targets</span>`);
+  }
+
   pane.innerHTML = `
     <div class="detail-panel">
       <div class="detail-header">
         <textarea class="detail-title-input" id="d-g-title" rows="1">${escHtml(g.title)}</textarea>
         <button class="btn btn-secondary btn-sm" id="d-g-expand" title="Open full view" style="padding:4px 7px;font-size:14px;line-height:1">⤢</button>
+        <button class="d-g-pin-btn${(JSON.parse(localStorage.getItem('pinned_metrics')||'[]')).includes(g.id) ? ' pinned' : ''}" id="d-g-pin" title="Pin to KPI dashboard">📌</button>
         <button class="detail-close-btn" id="d-g-close">×</button>
       </div>
       <div class="detail-body">
         <div class="goal-detail-progress">
-          <div class="goal-progress-bar" style="height:8px;margin-bottom:5px">
-            <div class="goal-progress-fill ${onTrackKey}" style="width:${pct}%"></div>
+          <div class="d-g-progress-row">
+            <div class="d-g-progress-pct ${onTrackKey}">${pct}<span style="font-size:18px">%</span></div>
+            <div style="flex:1;min-width:0">
+              <div class="goal-progress-bar" style="height:10px;margin-bottom:6px">
+                <div class="goal-progress-fill ${onTrackKey}" style="width:${pct}%"></div>
+              </div>
+              <div class="d-g-progress-status ${onTrackKey}">${onTrackLabel}</div>
+            </div>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-muted)">
-            <span>${onTrackLabel}</span>
-            <span>${pct}% complete</span>
-          </div>
-          ${g.current_streak > 0 ? `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">🔥 ${g.current_streak} day streak${g.best_streak > g.current_streak ? ` · best ${g.best_streak}` : ''}</div>` : ''}
+          ${heroChips.length ? `<div class="d-g-hero-chips">${heroChips.join('')}</div>` : ''}
         </div>
 
         <button class="goal-info-toggle" id="d-g-info-toggle">
@@ -581,6 +727,20 @@ function renderGDetail(g) {
   pane.querySelector('#d-g-title').addEventListener('input', e => autoResizeTextarea(e.target));
   pane.querySelector('#d-g-close').addEventListener('click', closeGDetail);
   pane.querySelector('#d-g-expand').addEventListener('click', () => openGFullView(g.id));
+  pane.querySelector('#d-g-pin').addEventListener('click', () => {
+    const pins = JSON.parse(localStorage.getItem('pinned_metrics') || '[]');
+    const idx  = pins.indexOf(g.id);
+    if (idx >= 0) {
+      pins.splice(idx, 1);
+    } else if (pins.length < 5) {
+      pins.push(g.id);
+    } else {
+      return; // max 5
+    }
+    localStorage.setItem('pinned_metrics', JSON.stringify(pins));
+    const btn = pane.querySelector('#d-g-pin');
+    btn.classList.toggle('pinned', pins.includes(g.id));
+  });
   pane.querySelector('#d-g-save').addEventListener('click', () => saveGDetail(g.id));
   pane.querySelector('#d-g-delete').addEventListener('click', () => {
     if (confirm(`Delete "${g.title}"?`)) doDeleteGoal(g.id);
@@ -743,6 +903,7 @@ function renderGMilestones(milestones, goalId, metrics) {
           </div>
         </div>
       </div>
+      <button class="goal-ms-pin-btn${m.is_pinned ? ' pinned' : ''}" data-ms-id="${m.id}" data-goal-id="${goalId}" title="${m.is_pinned ? 'Unpin from KPI' : 'Pin to KPI dashboard'}">📌</button>
       <button class="goal-ms-edit-btn" data-ms-id="${m.id}">Edit</button>
       <button class="goal-milestone-delete" data-ms-id="${m.id}">×</button>
     </div>`;
@@ -753,6 +914,23 @@ function renderGMilestones(milestones, goalId, metrics) {
       const msId = parseInt(cb.dataset.msId);
       const ms = milestones.find(m => m.id === msId);
       if (ms) await doToggleMilestone(goalId, msId, ms.completed);
+    });
+  });
+
+  container.querySelectorAll('.goal-ms-pin-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      btn.disabled = true;
+      try {
+        const g = await apiFetch('POST', `/goals/${parseInt(btn.dataset.goalId)}/milestones/${parseInt(btn.dataset.msId)}/pin`);
+        // Re-render milestones to reflect new pin state
+        const ms = (g.milestones || []).find(m => m.id === parseInt(btn.dataset.msId));
+        if (ms) {
+          btn.classList.toggle('pinned', !!ms.is_pinned);
+          btn.title = ms.is_pinned ? 'Unpin from KPI' : 'Pin to KPI dashboard';
+        }
+      } catch(err) { /* silent */ }
+      btn.disabled = false;
     });
   });
 
@@ -1130,6 +1308,7 @@ function renderGMetrics(metrics, goalId, milestones) {
         </div>
         <div class="goal-metric-actions">
           ${!done ? `<button class="goal-metric-btn goal-m-edit-btn" data-mid="${m.id}">Edit</button>` : ''}
+          ${!done ? `<button class="goal-ms-pin-btn${m.is_pinned ? ' pinned' : ''}" data-met-id="${m.id}" data-goal-id="${goalId}" title="${m.is_pinned ? 'Unpin from KPI' : 'Pin to KPI dashboard'}">📌</button>` : ''}
           <button class="goal-metric-del goal-m-del-btn" data-mid="${m.id}" title="Delete">×</button>
         </div>
       </div>
@@ -1166,6 +1345,17 @@ function renderGMetrics(metrics, goalId, milestones) {
       form.style.display = isOpen ? 'none' : 'block';
       btn.textContent = isOpen ? 'Edit' : 'Done';
       if (!isOpen) form.querySelector('.me-current')?.focus();
+    });
+  });
+
+  container.querySelectorAll('.goal-ms-pin-btn[data-met-id]').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      btn.disabled = true;
+      try {
+        const g = await apiFetch('POST', `/goals/${btn.dataset.goalId}/metrics/${btn.dataset.metId}/pin`);
+        renderGMetrics(g.metrics || [], goalId, milestones);
+      } catch(err) { btn.disabled = false; }
     });
   });
 

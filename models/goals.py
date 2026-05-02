@@ -47,6 +47,7 @@ class MilestoneUpdate(BaseModel):
     sort_order: Optional[int] = None
     metric_id: Optional[int] = None
     clear_metric_id: bool = False
+    is_pinned: Optional[int] = None
 
 
 class LogEntryCreate(BaseModel):
@@ -79,6 +80,7 @@ class MetricUpdate(BaseModel):
     clear_milestone_id: bool = False
     target_date: Optional[str] = None
     clear_target_date: bool = False
+    is_pinned: Optional[int] = None
 
 
 class HabitCreate(BaseModel):

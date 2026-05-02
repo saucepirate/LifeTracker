@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
-from typing import Optional
+from typing import Optional, List
 from datetime import date as _date, datetime, timedelta
+from calendar import monthrange
 import calendar as _cal
+import json
 import database
 import business
 from pydantic import BaseModel
@@ -19,6 +21,11 @@ class EventCreate(BaseModel):
     notes: Optional[str] = None
     note_id: Optional[int] = None
     task_id: Optional[int] = None
+    tag_id: Optional[int] = None
+    recurrence_cadence: Optional[str] = None        # 'daily' | 'weekly' | 'monthly' | None
+    recurrence_interval: Optional[int] = 1
+    recurrence_days_of_week: Optional[List[int]] = None  # 0=Mon … 6=Sun (weekly only)
+    recurrence_until: Optional[str] = None
 
 
 class EventUpdate(BaseModel):
@@ -31,8 +38,15 @@ class EventUpdate(BaseModel):
     notes: Optional[str] = None
     note_id: Optional[int] = None
     task_id: Optional[int] = None
+    tag_id: Optional[int] = None
     clear_note_id: bool = False
     clear_task_id: bool = False
+    clear_tag_id: bool = False
+    recurrence_cadence: Optional[str] = None
+    recurrence_interval: Optional[int] = None
+    recurrence_days_of_week: Optional[List[int]] = None
+    recurrence_until: Optional[str] = None
+    clear_recurrence: bool = False
 
 
 def _event_full(conn, event_id):
@@ -41,6 +55,7 @@ def _event_full(conn, event_id):
         return None
     e = dict(row)
     e['all_day'] = bool(e['all_day'])
+    e['recurrence_days_of_week'] = json.loads(e['recurrence_days_of_week']) if e.get('recurrence_days_of_week') else None
     if e.get('note_id'):
         n = conn.execute("SELECT id, title FROM notes WHERE id = ?", (e['note_id'],)).fetchone()
         e['note_title'] = n['title'] if n else None
@@ -53,38 +68,147 @@ def _event_full(conn, event_id):
     else:
         e['task_title'] = None
         e['task_status'] = None
+    if e.get('tag_id'):
+        tg = conn.execute("SELECT id, name, color FROM tags WHERE id = ?", (e['tag_id'],)).fetchone()
+        e['tag_name']  = tg['name']  if tg else None
+        e['tag_color'] = tg['color'] if tg else None
+    else:
+        e['tag_name']  = None
+        e['tag_color'] = None
     return e
+
+
+def _add_months(d, n):
+    month = d.month - 1 + n
+    year  = d.year + month // 12
+    month = month % 12 + 1
+    day   = min(d.day, monthrange(year, month)[1])
+    return d.replace(year=year, month=month, day=day)
+
+
+def _expand_recurring(master, range_start, range_end):
+    """Generate concrete occurrences (as dicts with mutated date/end_date) within
+    [range_start, range_end]. range_start/range_end are ISO strings."""
+    cadence  = master.get('recurrence_cadence')
+    if not cadence:
+        return [master]
+
+    interval = master.get('recurrence_interval') or 1
+    base     = datetime.strptime(master['date'], '%Y-%m-%d').date()
+    rs       = datetime.strptime(range_start, '%Y-%m-%d').date()
+    re_      = datetime.strptime(range_end,   '%Y-%m-%d').date()
+    until    = datetime.strptime(master['recurrence_until'], '%Y-%m-%d').date() if master.get('recurrence_until') else None
+    end      = min(re_, until) if until else re_
+
+    occurrences = []
+    span_days = 0
+    if master.get('end_date'):
+        try:
+            o_end = datetime.strptime(master['end_date'], '%Y-%m-%d').date()
+            span_days = (o_end - base).days
+        except Exception:
+            pass
+
+    def emit(d):
+        e = dict(master)
+        e['date'] = d.isoformat()
+        if span_days > 0:
+            e['end_date'] = (d + timedelta(days=span_days)).isoformat()
+        e['_is_recurrence'] = True
+        e['_master_id'] = master['id']
+        e['_master_date'] = master['date']
+        occurrences.append(e)
+
+    if cadence == 'daily':
+        # First occurrence on or after rs aligned to base + k*interval
+        if base >= rs:
+            cur = base
+        else:
+            steps = (rs - base).days
+            cur = base + timedelta(days=((steps + interval - 1) // interval) * interval)
+        while cur <= end:
+            emit(cur)
+            cur = cur + timedelta(days=interval)
+
+    elif cadence == 'weekly':
+        try:
+            dow = set(json.loads(master.get('recurrence_days_of_week') or '[]'))
+        except Exception:
+            dow = set()
+        if not dow:
+            dow = {base.weekday()}
+        cur = max(base, rs)
+        while cur <= end:
+            weeks_since_base = (cur - base).days // 7
+            if cur >= base and weeks_since_base % interval == 0 and cur.weekday() in dow:
+                emit(cur)
+            cur = cur + timedelta(days=1)
+
+    elif cadence == 'monthly':
+        cur = base
+        # Skip ahead until we're in/past range
+        while cur < rs:
+            cur = _add_months(cur, interval)
+        while cur <= end:
+            emit(cur)
+            cur = _add_months(cur, interval)
+
+    return occurrences
 
 
 def _get_range_data(conn, start: str, end: str):
     days = {}
 
-    # Calendar events (may span multiple days)
+    # Calendar events (may span multiple days, may recur)
     event_rows = conn.execute(
         """SELECT e.id, e.title, e.date, e.end_date, e.all_day, e.start_time, e.end_time,
-                  e.notes, e.note_id, e.task_id,
+                  e.notes, e.note_id, e.task_id, e.tag_id,
+                  e.recurrence_cadence, e.recurrence_interval, e.recurrence_days_of_week, e.recurrence_until,
                   n.title as note_title,
-                  t.title as task_title, t.status as task_status, t.priority as task_priority
+                  t.title as task_title, t.status as task_status, t.priority as task_priority,
+                  tg.name  as tag_name,
+                  tg.color as tag_color
            FROM events e
            LEFT JOIN notes n ON n.id = e.note_id
            LEFT JOIN tasks t ON t.id = e.task_id
-           WHERE e.date <= ? AND (e.end_date IS NULL OR e.end_date >= ?)
+           LEFT JOIN tags  tg ON tg.id = e.tag_id
+           WHERE (
+             (e.recurrence_cadence IS NULL AND e.date <= ? AND (e.end_date IS NULL OR e.end_date >= ?))
+             OR
+             (e.recurrence_cadence IS NOT NULL AND e.date <= ? AND (e.recurrence_until IS NULL OR e.recurrence_until >= ?))
+           )
            ORDER BY e.all_day DESC, CASE WHEN e.start_time IS NULL THEN 1 ELSE 0 END, e.start_time ASC""",
-        (end, start)
+        (end, start, end, start)
     ).fetchall()
 
-    for row in event_rows:
-        e = dict(row)
-        e['all_day'] = bool(e['all_day'])
-        ev_start = e['date']
-        ev_end = e['end_date'] or e['date']
+    def _place_event(e_dict):
+        # Parse dow JSON for the frontend
+        dow_raw = e_dict.get('recurrence_days_of_week')
+        if isinstance(dow_raw, str):
+            try:
+                e_dict['recurrence_days_of_week'] = json.loads(dow_raw)
+            except Exception:
+                e_dict['recurrence_days_of_week'] = None
+        ev_start = e_dict['date']
+        ev_end   = e_dict.get('end_date') or e_dict['date']
         cur = max(ev_start, start)
         while cur <= min(ev_end, end):
             if cur not in days:
                 days[cur] = {'events': [], 'tasks': [], 'milestones': [], 'metrics': []}
-            days[cur]['events'].append(e)
+            days[cur]['events'].append(e_dict)
             d = datetime.strptime(cur, '%Y-%m-%d') + timedelta(days=1)
             cur = d.strftime('%Y-%m-%d')
+
+    for row in event_rows:
+        e = dict(row)
+        e['all_day'] = bool(e['all_day'])
+        if e.get('recurrence_cadence'):
+            e['is_recurring'] = True
+            for occ in _expand_recurring(e, start, end):
+                _place_event(occ)
+        else:
+            e['is_recurring'] = False
+            _place_event(e)
 
     # Tasks by due_date
     task_rows = conn.execute(
@@ -236,11 +360,14 @@ def calendar_day(date: Optional[str] = None):
 @router.post("/events", status_code=201)
 def create_event(body: EventCreate):
     conn = database.get_connection()
+    dow_json = json.dumps(body.recurrence_days_of_week) if body.recurrence_days_of_week else None
     result = conn.execute(
-        """INSERT INTO events (title, date, end_date, all_day, start_time, end_time, notes, note_id, task_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+        """INSERT INTO events (title, date, end_date, all_day, start_time, end_time, notes, note_id, task_id, tag_id,
+                               recurrence_cadence, recurrence_interval, recurrence_days_of_week, recurrence_until)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
         (body.title, body.date, body.end_date, 1 if body.all_day else 0,
-         body.start_time, body.end_time, body.notes, body.note_id, body.task_id)
+         body.start_time, body.end_time, body.notes, body.note_id, body.task_id, body.tag_id,
+         body.recurrence_cadence, body.recurrence_interval or 1, dow_json, body.recurrence_until)
     ).fetchone()
     conn.commit()
     event = _event_full(conn, result[0])
@@ -271,6 +398,25 @@ def update_event(event_id: int, body: EventUpdate):
         fields['task_id'] = None
     elif body.task_id is not None:
         fields['task_id'] = body.task_id
+    if body.clear_tag_id:
+        fields['tag_id'] = None
+    elif body.tag_id is not None:
+        fields['tag_id'] = body.tag_id
+
+    if body.clear_recurrence:
+        fields['recurrence_cadence']        = None
+        fields['recurrence_interval']       = 1
+        fields['recurrence_days_of_week']   = None
+        fields['recurrence_until']          = None
+    else:
+        if body.recurrence_cadence is not None:
+            fields['recurrence_cadence'] = body.recurrence_cadence
+        if body.recurrence_interval is not None:
+            fields['recurrence_interval'] = body.recurrence_interval
+        if body.recurrence_days_of_week is not None:
+            fields['recurrence_days_of_week'] = json.dumps(body.recurrence_days_of_week)
+        if body.recurrence_until is not None:
+            fields['recurrence_until'] = body.recurrence_until
 
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)

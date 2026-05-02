@@ -64,6 +64,16 @@ async function _renderList(container) {
     card.addEventListener('click', () => _openWorkspace(container, parseInt(card.dataset.id)));
   });
 
+  container.querySelectorAll('.trip-highlight-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      try {
+        await apiFetch('POST', `/trips/${parseInt(btn.dataset.tripId)}/highlight`);
+        await _renderList(container);
+      } catch(err) { /* silent */ }
+    });
+  });
+
   animateProgressBars(container);
 }
 
@@ -113,7 +123,10 @@ function _tripCardHTML(t) {
       <div class="trip-card-body">
         <div class="trip-card-header">
           <div class="trip-card-name">${escHtml(t.name)}</div>
-          <span class="trip-status-badge ${statusClass}">${escHtml(t.status)}</span>
+          <div style="display:flex;gap:4px;align-items:center">
+            <button class="trip-highlight-btn${t.is_highlighted ? ' active' : ''}" data-trip-id="${t.id}" title="${t.is_highlighted ? 'Remove from dashboard' : 'Highlight on dashboard'}" onclick="event.stopPropagation()">📌</button>
+            <span class="trip-status-badge ${statusClass}">${escHtml(t.status)}</span>
+          </div>
         </div>
         ${t.destination ? `<div class="trip-card-dest">${escHtml(t.destination)}</div>` : ''}
         <div class="trip-card-meta">

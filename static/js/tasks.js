@@ -17,6 +17,7 @@ let _showMilestones = false;
 let _showHabits = false;
 
 const LISTS_KEY = 'lt_task_lists';
+let _listConfigs = [];
 
 // ── Entry point ───────────────────────────────────────────────
 registerPage('tasks', async function(content) {
@@ -106,20 +107,125 @@ function renderAll() {
 
 function renderStats() {
   const today = todayISO();
+  // Sunday-based week to match completed_at filtering on most calendars
   const weekStart = new Date();
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
   const weekStartISO = weekStart.toISOString().slice(0, 10);
+  const lastWeekStart = new Date(weekStart); lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+  const lastWeekStartISO = lastWeekStart.toISOString().slice(0, 10);
 
-  const dueToday  = _tasks.filter(t => t.status === 'pending' && t.due_date === today).length;
+  const pendingToday  = _tasks.filter(t => t.status === 'pending' && t.due_date === today).length;
+  const completedToday = _tasks.filter(t =>
+    t.status === 'completed' && t.completed_at && t.completed_at.slice(0,10) === today
+  ).length;
+  const dueTodayTotal = pendingToday + completedToday;
+
   const overdue   = _tasks.filter(t => t.status === 'pending' && t.due_date && t.due_date < today).length;
-  const doneWeek  = _tasks.filter(t => t.status === 'completed' && t.completed_at && t.completed_at >= weekStartISO).length;
-  const recurring = _tasks.filter(t => t.is_recurring && t.status === 'pending').length;
+  const highPriOpen = _tasks.filter(t =>
+    t.status === 'pending' && t.priority === 'high' && (!t.due_date || t.due_date >= today)
+  ).length;
 
-  document.getElementById('tasks-stats').innerHTML = `
-    <div class="stat-card stat-card--cyan"><div class="stat-label">Due today</div><div class="stat-value">${dueToday}</div></div>
-    <div class="stat-card stat-card--red"><div class="stat-label">Overdue</div><div class="stat-value${overdue > 0 ? ' danger' : ''}">${overdue}</div></div>
-    <div class="stat-card stat-card--green"><div class="stat-label">Completed this week</div><div class="stat-value">${doneWeek}</div></div>
-    <div class="stat-card stat-card--purple"><div class="stat-label">Recurring active</div><div class="stat-value">${recurring}</div></div>`;
+  const doneWeek = _tasks.filter(t => t.status === 'completed' && t.completed_at && t.completed_at >= weekStartISO).length;
+  const doneLastWeek = _tasks.filter(t =>
+    t.status === 'completed' && t.completed_at &&
+    t.completed_at >= lastWeekStartISO && t.completed_at < weekStartISO
+  ).length;
+  const weekDelta = doneWeek - doneLastWeek;
+
+  // Next pending due (skips overdue — those are slot 2)
+  const upcomingPending = _tasks
+    .filter(t => t.status === 'pending' && t.due_date && t.due_date >= today)
+    .sort((a, b) => a.due_date.localeCompare(b.due_date));
+  const nextDue = upcomingPending[0];
+
+  const totalPending = _tasks.filter(t => t.status === 'pending').length;
+  const recurring    = _tasks.filter(t => t.is_recurring && t.status === 'pending').length;
+
+  // Build KPIs dynamically
+  const kpis = [];
+
+  // Slot 1 — Today's progress (always)
+  kpis.push({
+    label: 'Today',
+    value: dueTodayTotal ? `${completedToday}/${dueTodayTotal}` : `${completedToday}`,
+    sub:   dueTodayTotal ? (pendingToday === 0 ? 'all clear ✓' : `${pendingToday} pending`)
+                         : (completedToday > 0 ? 'completed' : 'nothing due'),
+    accent: !dueTodayTotal ? 'gray'
+            : pendingToday === 0 ? 'green'
+            : (pendingToday <= 2 ? 'cyan' : 'amber'),
+  });
+
+  // Slot 2 — Overdue → High priority → Done today
+  if (overdue > 0) {
+    kpis.push({
+      label:  'Overdue',
+      value:  overdue,
+      sub:    'needs attention',
+      accent: 'red',
+    });
+  } else if (highPriOpen > 0) {
+    kpis.push({
+      label:  'High priority',
+      value:  highPriOpen,
+      sub:    'pending tasks',
+      accent: 'amber',
+    });
+  } else {
+    kpis.push({
+      label:  'Done today',
+      value:  completedToday,
+      sub:    completedToday > 0 ? '✓ keep it up' : 'no tasks completed',
+      accent: completedToday > 0 ? 'green' : 'gray',
+    });
+  }
+
+  // Slot 3 — This week (with delta vs last week)
+  let weekSub;
+  if (doneLastWeek === 0 && doneWeek === 0) weekSub = 'no activity';
+  else if (doneLastWeek === 0)              weekSub = 'this week';
+  else if (weekDelta > 0)                   weekSub = `↑ ${weekDelta} vs last week`;
+  else if (weekDelta < 0)                   weekSub = `↓ ${Math.abs(weekDelta)} vs last week`;
+  else                                      weekSub = 'same as last week';
+  kpis.push({
+    label:  'Completed',
+    value:  doneWeek,
+    sub:    weekSub,
+    accent: weekDelta > 0 ? 'green' : weekDelta < 0 ? 'amber' : 'blue',
+  });
+
+  // Slot 4 — Next due → Total pending → Recurring → All clear
+  if (nextDue) {
+    const days = Math.ceil((new Date(nextDue.due_date + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
+    const dayLbl = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days}d`;
+    const title  = nextDue.title.length > 26 ? nextDue.title.slice(0,25) + '…' : nextDue.title;
+    kpis.push({
+      label:  'Next due',
+      value:  dayLbl,
+      sub:    title,
+      accent: days <= 1 ? 'amber' : 'blue',
+    });
+  } else if (totalPending > 0) {
+    kpis.push({
+      label:  'Pending tasks',
+      value:  totalPending,
+      sub:    recurring > 0 ? `${recurring} recurring` : 'no due dates',
+      accent: 'blue',
+    });
+  } else {
+    kpis.push({
+      label:  'Inbox',
+      value:  'Empty',
+      sub:    'all caught up ✓',
+      accent: 'green',
+    });
+  }
+
+  document.getElementById('tasks-stats').innerHTML = kpis.map(k => `
+    <div class="stat-card stat-card--${k.accent}">
+      <div class="stat-label">${escHtml(k.label)}</div>
+      <div class="stat-value">${typeof k.value === 'string' ? escHtml(k.value) : k.value}</div>
+      ${k.sub ? `<div class="stat-sub">${escHtml(k.sub)}</div>` : ''}
+    </div>`).join('');
 }
 
 function renderSecondaryFilters() {
@@ -250,7 +356,8 @@ function renderAllLists() {
   const row = document.getElementById('task-lists-row');
   if (!row) return;
   row.innerHTML = '';
-  const configs = loadListConfigs();
+  _listConfigs = loadListConfigs();
+  const configs = _listConfigs;
   const newWideMode = configs.length === 0;
   if (newWideMode !== _wideMode) _expandedTaskId = null;
   _wideMode = newWideMode;
@@ -280,6 +387,9 @@ function buildListColumn(config, isMaster) {
   } else if (config.type === 'goal') {
     const goal = _tGoals.find(g => g.id === config.filter_id);
     if (goal) filterBadge = `<span class="tag-badge tag-amber" style="font-size:12px">${escHtml(goal.title)}</span>`;
+  } else if (config.type === 'trip') {
+    const trip = _tTrips.find(t => t.id === config.filter_id);
+    if (trip) filterBadge = `<span class="tag-badge tag-blue" style="font-size:12px">${escHtml(trip.name)}</span>`;
   }
 
   const addBtn = (!isMaster && config.type === 'goal')
@@ -299,7 +409,7 @@ function buildListColumn(config, isMaster) {
   if (!isMaster) {
     col.querySelector('.task-list-col-close').addEventListener('click', () => {
       removeListConfig(config.id);
-      renderAllLists();
+      renderAll();
     });
     col.querySelector('.task-list-col-add')?.addEventListener('click', () => {
       openNewTaskModal(config.filter_id || null);
@@ -334,6 +444,22 @@ function getTasksForConfig(config) {
   }
 
   if (config.type === 'master') {
+    // Exclude tasks already owned by a dedicated goal or tag list column
+    const listConfigs = _listConfigs;
+    const goalListIds = listConfigs.filter(c => c.type === 'goal').map(c => c.filter_id);
+    const tagListIds  = new Set(listConfigs.filter(c => c.type === 'tag').map(c => c.filter_id));
+    if (goalListIds.length)
+      result = result.filter(t => !goalListIds.includes(t.goal_id));
+    if (tagListIds.size)
+      result = result.filter(t => !(t.tags && t.tags.some(tg => tagListIds.has(tg.id))));
+    const tripTagIds = new Set();
+    listConfigs.filter(c => c.type === 'trip').forEach(c => {
+      const trip = _tTrips.find(tr => tr.id === c.filter_id);
+      if (trip?.tag_id) tripTagIds.add(trip.tag_id);
+    });
+    if (tripTagIds.size)
+      result = result.filter(t => !(t.tags && t.tags.some(tg => tripTagIds.has(tg.id))));
+
     if (_activeTagIds.size > 0)
       result = result.filter(t => t.tags && t.tags.some(tg => _activeTagIds.has(tg.id)));
     if (_activeGoalId)
@@ -347,6 +473,12 @@ function getTasksForConfig(config) {
     result = result.filter(t => t.tags && t.tags.some(tg => tg.id === config.filter_id));
   } else if (config.type === 'goal') {
     result = result.filter(t => t.goal_id === config.filter_id);
+  } else if (config.type === 'trip') {
+    const trip = _tTrips.find(tr => tr.id === config.filter_id);
+    if (trip?.tag_id)
+      result = result.filter(t => t.tags && t.tags.some(tg => tg.id === trip.tag_id));
+    else
+      result = [];
   }
 
   return sortedTasks(result);
@@ -1281,9 +1413,10 @@ function openAddListModal() {
 
   const tagOpts  = _tags.map(tg => `<option value="tag-${tg.id}">${escHtml(tg.name)}</option>`).join('');
   const goalOpts = _tGoals.map(g  => `<option value="goal-${g.id}">${escHtml(g.title)}</option>`).join('');
+  const tripOpts = _tTrips.filter(t => t.tag_id).map(t => `<option value="trip-${t.id}">${escHtml(t.name)}</option>`).join('');
 
-  if (!tagOpts && !goalOpts) {
-    alert('Create some tags or goals first to build a filtered list.');
+  if (!tagOpts && !goalOpts && !tripOpts) {
+    alert('Create some tags, goals, or trips first to build a filtered list.');
     return;
   }
 
@@ -1291,9 +1424,10 @@ function openAddListModal() {
     <div class="form-group">
       <label class="form-label">Filter by</label>
       <select class="form-select" id="al-filter">
-        <option value="">— pick a tag or goal —</option>
+        <option value="">— pick a filter —</option>
         ${tagOpts  ? `<optgroup label="Tags">${tagOpts}</optgroup>`   : ''}
         ${goalOpts ? `<optgroup label="Goals">${goalOpts}</optgroup>` : ''}
+        ${tripOpts ? `<optgroup label="Trips">${tripOpts}</optgroup>` : ''}
       </select>
     </div>
     <div class="form-group">
@@ -1302,15 +1436,14 @@ function openAddListModal() {
     </div>`;
 
   const modal = createModal('Add task list', body, (overlay) => {
-    const filterVal = document.getElementById('al-filter').value;
-    const name = document.getElementById('al-name').value.trim();
-    if (!filterVal || !name) { alert('Please select a filter and enter a name.'); return; }
-    const [type, id] = filterVal.split('-');
+    const filterVal = overlay.querySelector('#al-filter').value;
+    const name = overlay.querySelector('#al-name').value.trim();
+    if (!filterVal || !name) { alert('Please select a filter and enter a name.'); return false; }
+    const [type, ...rest] = filterVal.split('-');
+    const id = parseInt(rest.join('-'));
     const configs = loadListConfigs();
-    configs.push({ id: 'list-' + Date.now(), name, type, filter_id: parseInt(id) });
+    configs.push({ id: 'list-' + Date.now(), name, type, filter_id: id });
     saveListConfigs(configs);
-    closeModal(overlay);
-    overlay.remove();
     renderAllLists();
   });
 
@@ -1319,13 +1452,17 @@ function openAddListModal() {
     if (!val) return;
     const nameInput = modal.querySelector('#al-name');
     if (nameInput.value) return;
-    const [type, id] = val.split('-');
+    const [type, ...rest] = val.split('-');
+    const id = parseInt(rest.join('-'));
     if (type === 'tag') {
-      const tag = _tags.find(t => t.id === parseInt(id));
+      const tag = _tags.find(t => t.id === id);
       if (tag) nameInput.value = tag.name;
-    } else {
-      const goal = _tGoals.find(g => g.id === parseInt(id));
+    } else if (type === 'goal') {
+      const goal = _tGoals.find(g => g.id === id);
       if (goal) nameInput.value = goal.title;
+    } else if (type === 'trip') {
+      const trip = _tTrips.find(t => t.id === id);
+      if (trip) nameInput.value = trip.name;
     }
   });
 

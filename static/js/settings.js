@@ -33,6 +33,26 @@ registerPage('settings', async function(content) {
         </div>
 
         <div class="settings-card">
+          <div class="settings-card-title">Financial Profile</div>
+          <div class="settings-row">
+            <label class="settings-label">Birthday</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="date" class="form-input" id="s-birthday" style="max-width:200px">
+            </div>
+            <div class="settings-hint">Used to calculate age and years to retirement.</div>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Target retirement age</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="number" class="form-input" id="s-retire-age" min="40" max="100" placeholder="65" style="max-width:120px">
+            </div>
+          </div>
+          <div class="settings-row">
+            <button class="btn btn-primary btn-sm" id="s-fin-save">Save profile</button>
+          </div>
+        </div>
+
+        <div class="settings-card">
           <div class="settings-card-title">Tags</div>
           <div id="s-tags-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px"></div>
           <div id="s-tag-add-form" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -77,8 +97,21 @@ registerPage('settings', async function(content) {
     });
   });
 
-  // Populate name
+  // Populate name + financial profile
   document.getElementById('s-name').value = _settings.user_name || '';
+  document.getElementById('s-birthday').value   = _settings.birthday || '';
+  document.getElementById('s-retire-age').value = _settings.target_retirement_age || '';
+
+  document.getElementById('s-fin-save').addEventListener('click', async () => {
+    const bd  = document.getElementById('s-birthday').value;
+    const ra  = document.getElementById('s-retire-age').value;
+    try {
+      await apiFetch('PATCH', '/settings', {
+        values: { birthday: bd || '', target_retirement_age: ra || '' },
+      });
+      _showToast('Financial profile saved.');
+    } catch(e) { alert('Error: ' + e.message); }
+  });
 
   // Color picker selection
   content.querySelectorAll('.s-color-swatch').forEach(swatch => {

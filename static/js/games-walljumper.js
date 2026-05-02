@@ -1,157 +1,202 @@
 // ── Wall Jumper ───────────────────────────────────────────────
+// Stick to a wall, then press Space/Click to launch across.
+// Navigate through the gaps in the bars scrolling down toward you.
 function startWallJumper(container, onGameOver, updateScore) {
   const W = 320, H = 540;
-  const WALL_W = 14, CHAR_W = 20, CHAR_H = 24;
+  const WALL_W  = 16;
+  const CHAR_W  = 16, CHAR_H = 20;
+  const GRAVITY = 0.26;
+  const JUMP_VY = -6.2;
+  const MOVE_VX = 7.2;
+  const BAR_GAP = 86; // vertical spacing between bars
 
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   canvas.style.display = 'block';
-  canvas.style.margin = '0 auto';
+  canvas.style.margin  = '0 auto';
   container.appendChild(canvas);
   const ctx = canvas.getContext('2d');
 
-  let char, bars, score, lives, raf, alive, frameCount, scrollSpeed;
-  let onWall = 'left';
-  let velX, velY;
+  // state: 'left' | 'right' | 'air'
+  let state, char, velX, velY, bars, score, lives, frameCount, scrollSpeed, alive, raf;
 
-  function currentGap() {
-    return Math.max(52, 80 - Math.floor(score / 15) * 2);
+  function barGap() { return Math.max(68, 115 - Math.floor(score / 25) * 2); }
+
+  function addBar(y) {
+    const g = barGap();
+    const inner = W - 2 * WALL_W;
+    const gapX  = WALL_W + 4 + Math.floor(Math.random() * (inner - g - 8));
+    bars.push({ y, gapX, gap: g, h: 12 });
   }
 
   function init() {
-    char = { x: WALL_W, y: H / 2, w: CHAR_W, h: CHAR_H };
-    bars = []; score = 0; lives = 3; alive = true; frameCount = 0; scrollSpeed = 2.8;
-    velX = 4; velY = -1.5; onWall = 'left';
-    for (let i = 1; i <= 10; i++) addBar(H / 2 - i * 52);
-  }
-
-  function addBar(y) {
-    const gap = currentGap();
-    const innerW = W - 2 * WALL_W;
-    const gapX = WALL_W + Math.floor(Math.random() * (innerW - gap - 4)) + 2;
-    const barH = 10 + Math.floor(Math.random() * 5);
-    bars.push({ y, gapX, gap, h: barH });
+    char        = { x: WALL_W, y: H * 0.50 };
+    velX        = 0; velY = 0;
+    bars        = []; score = 0; lives = 3;
+    alive       = true; frameCount = 0; scrollSpeed = 2.4;
+    state       = 'left';
+    for (let i = 1; i <= 8; i++) addBar(char.y - i * BAR_GAP);
   }
 
   function jump() {
-    if (!alive) return;
-    if (onWall === 'left')       { velX =  5.5; onWall = null; }
-    else if (onWall === 'right') { velX = -5.5; onWall = null; }
-    velY = -4;
+    if (!alive || state === 'air') return;
+    velX  = (state === 'left') ? MOVE_VX : -MOVE_VX;
+    velY  = JUMP_VY;
+    state = 'air';
   }
 
   function onKey(e) {
     if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
   }
-  function onClick() { jump(); }
   document.addEventListener('keydown', onKey);
-  canvas.addEventListener('click', onClick);
+  canvas.addEventListener('click', jump);
 
-  function drawChar() {
-    const c = char;
-    ctx.fillStyle = '#222';
-    ctx.fillRect(c.x, c.y, c.w, c.h);
-    const legPhase = Math.floor(frameCount / 6) % 2;
-    ctx.fillStyle = '#444';
-    if (legPhase === 0) {
-      ctx.fillRect(c.x + 2,  c.y + c.h, 5, 5);
-      ctx.fillRect(c.x + 13, c.y + c.h - 3, 5, 5);
-    } else {
-      ctx.fillRect(c.x + 2,  c.y + c.h - 3, 5, 5);
-      ctx.fillRect(c.x + 13, c.y + c.h, 5, 5);
-    }
-    ctx.fillStyle = '#fff';
-    const eyeXBase = velX >= 0 ? c.x + c.w - 7 : c.x + 2;
-    ctx.fillRect(eyeXBase, c.y + 5, 5, 5);
-    ctx.fillStyle = '#111';
-    const pupilX = velX >= 0 ? eyeXBase + 2 : eyeXBase + 1;
-    ctx.fillRect(pupilX, c.y + 6, 2, 3);
-  }
-
+  // ── Drawing ──────────────────────────────────────────────────
   function draw() {
-    ctx.fillStyle = '#f7f7f7';
+    // background
+    ctx.fillStyle = '#f0f0f0';
     ctx.fillRect(0, 0, W, H);
 
+    // walls
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, WALL_W, H);
     ctx.fillRect(W - WALL_W, 0, WALL_W, H);
-    ctx.fillStyle = '#444';
-    for (let y = 0; y < H; y += 16) {
-      ctx.fillRect(2, y, WALL_W - 4, 1);
-      ctx.fillRect(W - WALL_W + 2, y, WALL_W - 4, 1);
+    ctx.fillStyle = '#3a3a3a';
+    for (let y = 4; y < H; y += 14) {
+      ctx.fillRect(3, y, WALL_W - 6, 2);
+      ctx.fillRect(W - WALL_W + 3, y, WALL_W - 6, 2);
     }
 
+    // bars
     bars.forEach(b => {
-      ctx.fillStyle = '#ccc';
-      ctx.fillRect(WALL_W + 2, b.y + 3, b.gapX - WALL_W, b.h);
-      ctx.fillRect(b.gapX + b.gap + 2, b.y + 3, W - WALL_W - b.gapX - b.gap, b.h);
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(WALL_W, b.y, b.gapX - WALL_W, b.h);
-      ctx.fillRect(b.gapX + b.gap, b.y, W - WALL_W - b.gapX - b.gap, b.h);
-      ctx.fillStyle = '#555';
-      ctx.fillRect(WALL_W, b.y, b.gapX - WALL_W, 2);
-      ctx.fillRect(b.gapX + b.gap, b.y, W - WALL_W - b.gapX - b.gap, 2);
+      // left segment
+      const lw = b.gapX - WALL_W;
+      const rx = b.gapX + b.gap;
+      const rw = W - WALL_W - rx;
+      if (lw > 0) {
+        ctx.fillStyle = '#c0392b';
+        ctx.fillRect(WALL_W, b.y, lw, b.h);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(WALL_W, b.y, lw, 3);
+        ctx.fillStyle = '#922b21';
+        ctx.fillRect(WALL_W, b.y + b.h - 2, lw, 2);
+      }
+      // right segment
+      if (rw > 0) {
+        ctx.fillStyle = '#c0392b';
+        ctx.fillRect(rx, b.y, rw, b.h);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(rx, b.y, rw, 3);
+        ctx.fillStyle = '#922b21';
+        ctx.fillRect(rx, b.y + b.h - 2, rw, 2);
+      }
+      // gap arrow hint
+      const mid = b.gapX + b.gap / 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.10)';
+      ctx.beginPath();
+      ctx.moveTo(mid,     b.y + 2);
+      ctx.lineTo(mid - 7, b.y + b.h - 2);
+      ctx.lineTo(mid + 7, b.y + b.h - 2);
+      ctx.closePath();
+      ctx.fill();
     });
 
-    drawChar();
+    // character
+    const cx = char.x, cy = char.y;
+    // body
+    ctx.fillStyle = '#222';
+    ctx.fillRect(cx, cy, CHAR_W, CHAR_H);
+    // eye direction
+    const lookRight = velX >= 0;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(lookRight ? cx + CHAR_W - 7 : cx + 1, cy + 4, 5, 5);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(lookRight ? cx + CHAR_W - 5 : cx + 2, cy + 5, 2, 3);
+    // legs
+    const lp = Math.floor(frameCount / 6) % 2;
+    ctx.fillStyle = '#444';
+    if (state !== 'air') {
+      ctx.fillRect(cx + 1,          cy + CHAR_H, 5, 5);
+      ctx.fillRect(cx + CHAR_W - 6, cy + CHAR_H, 5, 5);
+    } else if (lp === 0) {
+      ctx.fillRect(cx + 1,          cy + CHAR_H,     5, 5);
+      ctx.fillRect(cx + CHAR_W - 6, cy + CHAR_H - 3, 5, 5);
+    } else {
+      ctx.fillRect(cx + 1,          cy + CHAR_H - 3, 5, 5);
+      ctx.fillRect(cx + CHAR_W - 6, cy + CHAR_H,     5, 5);
+    }
 
-    ctx.fillStyle = '#555';
+    // wall grip indicator
+    if (state !== 'air') {
+      ctx.fillStyle = 'rgba(255,255,255,0.20)';
+      const gx = (state === 'left') ? WALL_W : W - WALL_W - 3;
+      ctx.fillRect(gx, cy - 3, 3, CHAR_H + 6);
+    }
+
+    // HUD
+    ctx.fillStyle = '#444';
     ctx.font = 'bold 13px "Courier New", monospace';
-    const hiText = `HI ${String(_scores['walljumper'] || 0).padStart(5, '0')}`;
-    const scText = String(score).padStart(5, '0');
-    ctx.fillText(hiText + '  ' + scText, W / 2 - 72, 22);
-
+    const hi = String(_scores['walljumper'] || 0).padStart(5, '0');
+    const sc = String(score).padStart(5, '0');
+    ctx.fillText(`HI ${hi}  ${sc}`, W / 2 - 68, 22);
+    // lives
     for (let i = 0; i < lives; i++) {
-      ctx.fillStyle = '#1a1a1a';
+      ctx.fillStyle = '#222';
       ctx.fillRect(W - WALL_W - 10 - i * 13, 8, 8, 10);
     }
   }
 
+  // ── Game loop ────────────────────────────────────────────────
   function loop() {
     raf = requestAnimationFrame(loop);
     frameCount++;
 
-    if (frameCount % 400 === 0) scrollSpeed = Math.min(scrollSpeed + 0.4, 8);
+    if (frameCount % 320 === 0) scrollSpeed = Math.min(scrollSpeed + 0.3, 7.5);
 
+    // scroll bars down
     bars.forEach(b => b.y += scrollSpeed);
     bars = bars.filter(b => b.y < H + 20);
 
-    const topBar = bars.length ? bars.reduce((m, b) => b.y < m ? b.y : m, H) : H;
-    if (topBar > 52) addBar(topBar - 52);
+    // spawn bars from top to keep the column full
+    const topY = bars.length ? bars.reduce((m, b) => b.y < m ? b.y : m, H) : H;
+    if (topY > BAR_GAP) addBar(topY - BAR_GAP);
 
-    velY += 0.22;
-    char.y += velY;
-    char.x += velX;
+    // physics (character is STATIC on wall — bars will reach it)
+    if (state === 'air') {
+      velY    += GRAVITY;
+      char.x  += velX;
+      char.y  += velY;
 
-    if (char.x <= WALL_W) {
-      char.x = WALL_W;
-      velX = Math.abs(velX) * 0.45;
-      onWall = 'left';
-      velY = Math.max(velY, -0.5);
+      // wall landing
+      if (char.x <= WALL_W) {
+        char.x = WALL_W;
+        velX = 0; velY = 0;
+        state = 'left';
+      } else if (char.x + CHAR_W >= W - WALL_W) {
+        char.x = W - WALL_W - CHAR_W;
+        velX = 0; velY = 0;
+        state = 'right';
+      }
+
+      // ceiling bounce
+      if (char.y < 28) { char.y = 28; velY = Math.abs(velY) * 0.4; }
     }
-    if (char.x + char.w >= W - WALL_W) {
-      char.x = W - WALL_W - char.w;
-      velX = -Math.abs(velX) * 0.45;
-      onWall = 'right';
-      velY = Math.max(velY, -0.5);
-    }
+    // (if on wall: char position doesn't change — bars scroll down to it)
 
+    // bar collision check
+    let hit = false;
     for (const b of bars) {
-      const inGap = char.x + char.w > b.gapX + 3 && char.x < b.gapX + b.gap - 3;
-      if (inGap) continue;
-      const prevY = char.y - velY;
-      if (prevY + char.h <= b.y + 1 && char.y + char.h >= b.y) {
-        char.y = b.y - char.h;
-        velY = 0;
-        onWall = null;
-      }
-      if (prevY >= b.y + b.h - 1 && char.y <= b.y + b.h) {
-        char.y = b.y + b.h;
-        velY = Math.abs(velY) * 0.5;
-      }
+      const cT = char.y, cB = char.y + CHAR_H;
+      if (cB <= b.y || cT >= b.y + b.h) continue; // no y overlap
+      // use character centre for gap check
+      const cMid = char.x + CHAR_W / 2;
+      if (cMid < b.gapX || cMid > b.gapX + b.gap) { hit = true; break; }
     }
 
-    if (char.y > H + 10) {
+    // fell off bottom
+    if (char.y > H + 10) hit = true;
+
+    if (hit) {
       lives--;
       if (lives <= 0) {
         cancelAnimationFrame(raf);
@@ -160,10 +205,12 @@ function startWallJumper(container, onGameOver, updateScore) {
         onGameOver(score);
         return;
       }
-      char.y = H / 2;
-      char.x = onWall === 'right' ? W - WALL_W - char.w : WALL_W;
-      velY = -2.5;
-      velX = onWall === 'right' ? -4 : 4;
+      // respawn on the wall the character was last touching
+      const w = (state === 'right') ? 'right' : 'left';
+      char.x = (w === 'right') ? W - WALL_W - CHAR_W : WALL_W;
+      char.y = H * 0.50;
+      velX = 0; velY = 0;
+      state = w;
     }
 
     score = Math.floor(frameCount * scrollSpeed / 40);
@@ -177,6 +224,6 @@ function startWallJumper(container, onGameOver, updateScore) {
   return function cleanup() {
     cancelAnimationFrame(raf);
     document.removeEventListener('keydown', onKey);
-    canvas.removeEventListener('click', onClick);
+    canvas.removeEventListener('click', jump);
   };
 }

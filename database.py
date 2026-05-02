@@ -404,8 +404,420 @@ def init_db():
         """)
     except Exception:
         pass
+    # Migration: add is_pinned to goal_milestones
+    try:
+        conn.execute("ALTER TABLE goal_milestones ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    # Migration: add is_highlighted to trips
+    try:
+        conn.execute("ALTER TABLE trips ADD COLUMN is_highlighted INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    # Migration: add is_pinned to goal_metrics
+    try:
+        conn.execute("ALTER TABLE goal_metrics ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    # Migration: recurrence support on events
+    for ddl in [
+        "ALTER TABLE events ADD COLUMN recurrence_cadence TEXT",
+        "ALTER TABLE events ADD COLUMN recurrence_interval INTEGER DEFAULT 1",
+        "ALTER TABLE events ADD COLUMN recurrence_days_of_week TEXT",
+        "ALTER TABLE events ADD COLUMN recurrence_until TEXT",
+        "ALTER TABLE events ADD COLUMN tag_id INTEGER REFERENCES tags(id)",
+    ]:
+        try:
+            conn.execute(ddl)
+        except Exception:
+            pass
+
+    # Finance tables
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS finance_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'credit',
+            institution TEXT,
+            notes TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            color TEXT NOT NULL DEFAULT 'blue',
+            icon TEXT,
+            is_income INTEGER NOT NULL DEFAULT 0,
+            is_savings INTEGER NOT NULL DEFAULT 0,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_category_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL REFERENCES finance_categories(id) ON DELETE CASCADE,
+            rule_type TEXT NOT NULL,
+            pattern TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            is_default INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER REFERENCES finance_accounts(id) ON DELETE SET NULL,
+            date TEXT NOT NULL,
+            name TEXT NOT NULL,
+            memo TEXT,
+            amount REAL NOT NULL,
+            mcc TEXT,
+            category_id INTEGER REFERENCES finance_categories(id) ON DELETE SET NULL,
+            user_classified INTEGER NOT NULL DEFAULT 0,
+            is_transfer INTEGER NOT NULL DEFAULT 0,
+            notes TEXT,
+            raw_row TEXT,
+            imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_income_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            amount REAL NOT NULL,
+            frequency TEXT NOT NULL DEFAULT 'monthly',
+            start_date TEXT,
+            end_date TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_holdings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER REFERENCES finance_accounts(id) ON DELETE SET NULL,
+            symbol TEXT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'stock',
+            shares REAL,
+            cost_basis REAL,
+            current_price REAL,
+            notes TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_goals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'savings',
+            target_amount REAL NOT NULL,
+            current_amount REAL NOT NULL DEFAULT 0,
+            target_date TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_plan_expenditures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            amount REAL NOT NULL,
+            expected_date TEXT,
+            notes TEXT,
+            is_recurring INTEGER NOT NULL DEFAULT 0,
+            recurrence_months INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_liabilities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'loan',
+            principal REAL,
+            current_balance REAL NOT NULL DEFAULT 0,
+            interest_rate REAL,
+            payment_amount REAL,
+            payment_frequency TEXT,
+            next_payment_date TEXT,
+            lender TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS finance_imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT,
+            account_id INTEGER REFERENCES finance_accounts(id) ON DELETE SET NULL,
+            imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+            inserted_count INTEGER NOT NULL DEFAULT 0,
+            classified_count INTEGER NOT NULL DEFAULT 0,
+            unclassified_count INTEGER NOT NULL DEFAULT 0,
+            skipped_count INTEGER NOT NULL DEFAULT 0,
+            summary TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_fintx_date ON finance_transactions(date);
+        CREATE INDEX IF NOT EXISTS idx_fintx_cat  ON finance_transactions(category_id);
+        CREATE INDEX IF NOT EXISTS idx_finrules_pattern ON finance_category_rules(rule_type, pattern);
+    """)
+    # Migrations for added columns (safe on fresh + existing DBs)
+    for ddl in [
+        "ALTER TABLE finance_holdings ADD COLUMN value REAL",
+        "ALTER TABLE finance_transactions ADD COLUMN import_id INTEGER REFERENCES finance_imports(id) ON DELETE SET NULL",
+        "ALTER TABLE finance_categories ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0",
+    ]:
+        try:
+            conn.execute(ddl)
+        except Exception:
+            pass
+
+    # One-time backfill: link pre-existing transactions to a synthetic "legacy" import
+    # so the user can roll them back through the Import History UI. Only runs once.
+    try:
+        flag = conn.execute("SELECT value FROM settings WHERE key = 'finance_legacy_backfilled'").fetchone()
+        if not flag:
+            null_count = conn.execute(
+                "SELECT COUNT(*) FROM finance_transactions WHERE import_id IS NULL"
+            ).fetchone()[0]
+            if null_count > 0:
+                cur = conn.execute(
+                    """INSERT INTO finance_imports (filename, inserted_count, classified_count,
+                                                    unclassified_count, skipped_count, summary)
+                       VALUES (?, ?, 0, 0, 0, ?) RETURNING id""",
+                    (
+                        'legacy-import (pre-tracking).csv',
+                        null_count,
+                        'Synthesized so you can roll back transactions imported before import history existed.'
+                    )
+                )
+                legacy_id = cur.fetchone()[0]
+                conn.execute(
+                    "UPDATE finance_transactions SET import_id = ? WHERE import_id IS NULL",
+                    (legacy_id,)
+                )
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('finance_legacy_backfilled', '1')"
+            )
+    except Exception:
+        pass
+    _seed_finance(conn)
+
+    # One-time: mark Credit Card Payment as excluded from totals by default
+    try:
+        flag = conn.execute("SELECT value FROM settings WHERE key='fin_cc_payment_excluded'").fetchone()
+        if not flag:
+            conn.execute("UPDATE finance_categories SET is_excluded=1 WHERE name='Credit Card Payment'")
+            conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('fin_cc_payment_excluded','1')")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
+
+
+# Default categories — focused set for spending insights.
+# (name, color, icon, is_income, is_savings) — order is sort_order; Other always last.
+DEFAULT_FIN_CATEGORIES = [
+    ('Groceries',           'green',  '🛒', 0, 0),
+    ('Dining out',          'amber',  '🍽',  0, 0),
+    ('Transportation',      'red',    '🚗', 0, 0),
+    ('Travel',              'teal',   '✈',  0, 0),
+    ('Shopping',            'pink',   '🛍', 0, 0),
+    ('Housing',             'blue',   '🏠', 0, 0),
+    ('Bills & Utilities',   'gray',   '💡', 0, 0),
+    ('Subscriptions',       'purple', '📺', 0, 0),
+    ('Health & Personal',   'green',  '⚕',  0, 0),
+    ('Entertainment',       'purple', '🎬', 0, 0),
+    ('Salary',              'green',  '💰', 1, 0),
+    ('Other Income',        'green',  '💼', 1, 0),
+    ('Savings',             'teal',   '🏦', 0, 1),
+    ('Credit Card Payment', 'gray',   '💳', 0, 0),
+    ('Other',               'gray',   '•',  0, 0),  # always last (sort_order 999)
+]
+
+# One-time consolidation map: old default name → new default name.
+# Lets us migrate existing user data into the new shorter list.
+CATEGORY_CONSOLIDATION = {
+    'Restaurants':         'Dining out',
+    'Fast Food & Coffee':  'Dining out',
+    'Bars':                'Dining out',
+    'Food Delivery':       'Dining out',
+    'Fuel':                'Transportation',
+    'Rideshare':           'Transportation',
+    'Auto':                'Transportation',
+    'Business Travel':     'Travel',
+    'Travel & Lodging':    'Travel',
+    'Online Shopping':     'Shopping',
+    'Retail':              'Shopping',
+    'Gifts':               'Shopping',
+    'Personal Care':       'Health & Personal',
+    'Health':              'Health & Personal',
+    'Medication':          'Health & Personal',
+    'Streaming':           'Subscriptions',
+    'Software':            'Subscriptions',
+    'Music':               'Entertainment',
+    'Hobby':               'Entertainment',
+    'Utilities':           'Bills & Utilities',
+    'Insurance':           'Bills & Utilities',
+    'Rent & Housing':      'Housing',
+    'Side Income':         'Other Income',
+    'Refund':              'Other Income',
+    'Savings Transfer':    'Savings',
+    'Investment':          'Savings',
+}
+
+DEFAULT_FIN_RULES_MCC = [
+    ('5411', 'Groceries'), ('5422', 'Groceries'), ('5499', 'Groceries'),
+    ('5812', 'Dining out'), ('5814', 'Dining out'), ('5813', 'Dining out'),
+    ('5541', 'Transportation'), ('5542', 'Transportation'),
+    ('4121', 'Transportation'), ('4131', 'Transportation'), ('4111', 'Transportation'),
+    ('5511', 'Transportation'), ('5521', 'Transportation'),
+    ('7531', 'Transportation'), ('7549', 'Transportation'),
+    ('7011', 'Travel'), ('3501', 'Travel'), ('3502', 'Travel'),
+    ('3503', 'Travel'), ('3690', 'Travel'), ('4511', 'Travel'),
+    ('7512', 'Travel'), ('7513', 'Travel'),
+    ('5942', 'Shopping'),
+    ('5310', 'Shopping'), ('5311', 'Shopping'), ('5331', 'Shopping'),
+    ('5651', 'Shopping'), ('5712', 'Shopping'), ('5722', 'Shopping'),
+    ('7230', 'Health & Personal'), ('7297', 'Health & Personal'), ('7298', 'Health & Personal'),
+    ('8011', 'Health & Personal'), ('8021', 'Health & Personal'), ('8042', 'Health & Personal'),
+    ('5912', 'Health & Personal'), ('5122', 'Health & Personal'),
+    ('4899', 'Subscriptions'),
+    ('5734', 'Subscriptions'), ('5735', 'Subscriptions'), ('7372', 'Subscriptions'),
+    ('5733', 'Entertainment'),
+    ('7832', 'Entertainment'), ('7841', 'Entertainment'),
+    ('6513', 'Housing'),
+    ('4814', 'Bills & Utilities'), ('4815', 'Bills & Utilities'), ('4900', 'Bills & Utilities'),
+    ('6300', 'Bills & Utilities'), ('6381', 'Bills & Utilities'),
+    ('7299', 'Other'),
+]
+
+DEFAULT_FIN_RULES_MERCHANT = [
+    ('DOORDASH',     'Dining out'),
+    ('UBER EATS',    'Dining out'),
+    ('GRUBHUB',      'Dining out'),
+    ('STARBUCKS',    'Dining out'),
+    ('AMAZON',       'Shopping'),
+    ('AMZN',         'Shopping'),
+    ('WALMART',      'Shopping'),
+    ('TARGET',       'Shopping'),
+    ('COSTCO',       'Groceries'),
+    ('TRADER JOE',   'Groceries'),
+    ('WHOLE FOODS',  'Groceries'),
+    ('NETFLIX',      'Subscriptions'),
+    ('SPOTIFY',      'Subscriptions'),
+    ('PARAMOUNT',    'Subscriptions'),
+    ('HULU',         'Subscriptions'),
+    ('DISNEY+',      'Subscriptions'),
+    ('UBER',         'Transportation'),
+    ('LYFT',         'Transportation'),
+    ('MARRIOTT',     'Travel'),
+    ('HILTON',       'Travel'),
+    ('AIRBNB',       'Travel'),
+    ('CVS',          'Health & Personal'),
+    ('WALGREENS',    'Health & Personal'),
+    ('RITE AID',     'Health & Personal'),
+    ('PAYMENT THANK YOU', 'Credit Card Payment'),
+    ('ONLINE PAYMENT',    'Credit Card Payment'),
+    ('PYMT THANK YOU',    'Credit Card Payment'),
+    ('AUTOPAY',           'Credit Card Payment'),
+    ('GEICO',        'Bills & Utilities'),
+    ('PROGRESSIVE',  'Bills & Utilities'),
+    ('STATE FARM',   'Bills & Utilities'),
+    ('ALLSTATE',     'Bills & Utilities'),
+    ('GITHUB',       'Subscriptions'),
+    ('ADOBE',        'Subscriptions'),
+    ('DROPBOX',      'Subscriptions'),
+    ('GOOGLE',       'Subscriptions'),
+    ('MICROSOFT',    'Subscriptions'),
+    ('OPENAI',       'Subscriptions'),
+    ('ANTHROPIC',    'Subscriptions'),
+    ('JETBRAINS',    'Subscriptions'),
+    ('1PASSWORD',    'Subscriptions'),
+]
+
+
+def _seed_finance(conn):
+    """Idempotent: adds any missing default categories and default rules."""
+    existing_names = {r['name'] for r in conn.execute("SELECT name FROM finance_categories").fetchall()}
+    next_so = conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM finance_categories").fetchone()[0]
+    for i, (name, color, icon, is_income, is_savings) in enumerate(DEFAULT_FIN_CATEGORIES):
+        if name in existing_names:
+            continue
+        so = 999 if name == 'Other' else (next_so + i)
+        is_excluded = 1 if name == 'Credit Card Payment' else 0
+        conn.execute(
+            "INSERT INTO finance_categories (name, color, icon, is_income, is_savings, is_excluded, is_default, sort_order) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            (name, color, icon, is_income, is_savings, is_excluded, so)
+        )
+
+    # Build name → id map
+    cat_map = {r['name']: r['id'] for r in conn.execute("SELECT id, name FROM finance_categories").fetchall()}
+    existing_rules = {(r['rule_type'], r['pattern']) for r in conn.execute(
+        "SELECT rule_type, pattern FROM finance_category_rules WHERE is_default = 1"
+    ).fetchall()}
+
+    for mcc, cat_name in DEFAULT_FIN_RULES_MCC:
+        cid = cat_map.get(cat_name)
+        if cid and ('mcc', mcc) not in existing_rules:
+            conn.execute(
+                "INSERT INTO finance_category_rules (category_id, rule_type, pattern, priority, is_default) VALUES (?, 'mcc', ?, 0, 1)",
+                (cid, mcc)
+            )
+    for pat, cat_name in DEFAULT_FIN_RULES_MERCHANT:
+        cid = cat_map.get(cat_name)
+        if cid and ('merchant', pat) not in existing_rules:
+            conn.execute(
+                "INSERT INTO finance_category_rules (category_id, rule_type, pattern, priority, is_default) VALUES (?, 'merchant', ?, 5, 1)",
+                (cid, pat)
+            )
+
+    # Run the v2 consolidation if not already done
+    _migrate_finance_categories_v2(conn)
+
+
+def _migrate_finance_categories_v2(conn):
+    """One-time consolidation: re-points old default-category data to the new
+    reduced category list, deletes orphaned old defaults, and resets sort_orders
+    so they match DEFAULT_FIN_CATEGORIES (Other = 999)."""
+    flag = conn.execute("SELECT value FROM settings WHERE key = 'finance_cats_v2_done'").fetchone()
+    if flag:
+        return
+
+    name_to_id = {r['name']: r['id'] for r in conn.execute("SELECT id, name FROM finance_categories").fetchall()}
+
+    # Re-point transactions and rules from old → new
+    for old_name, new_name in CATEGORY_CONSOLIDATION.items():
+        old_id = name_to_id.get(old_name)
+        new_id = name_to_id.get(new_name)
+        if old_id and new_id:
+            conn.execute(
+                "UPDATE finance_transactions SET category_id = ? WHERE category_id = ?", (new_id, old_id)
+            )
+            conn.execute(
+                "UPDATE finance_category_rules SET category_id = ? WHERE category_id = ?", (new_id, old_id)
+            )
+
+    # Drop old default categories that are now unreferenced
+    for old_name in CATEGORY_CONSOLIDATION.keys():
+        old_id = name_to_id.get(old_name)
+        if not old_id:
+            continue
+        is_def = conn.execute("SELECT is_default FROM finance_categories WHERE id = ?", (old_id,)).fetchone()
+        if not is_def or not is_def['is_default']:
+            continue  # user customised — leave alone
+        tcnt = conn.execute("SELECT COUNT(*) FROM finance_transactions WHERE category_id = ?", (old_id,)).fetchone()[0]
+        rcnt = conn.execute("SELECT COUNT(*) FROM finance_category_rules WHERE category_id = ?", (old_id,)).fetchone()[0]
+        if tcnt == 0 and rcnt == 0:
+            conn.execute("DELETE FROM finance_categories WHERE id = ?", (old_id,))
+
+    # Reset sort orders for the new defaults; Other always last
+    for i, (name, _c, _ic, _inc, _sav) in enumerate(DEFAULT_FIN_CATEGORIES):
+        so = 999 if name == 'Other' else i
+        conn.execute("UPDATE finance_categories SET sort_order = ? WHERE name = ?", (so, name))
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('finance_cats_v2_done', '1')"
+    )
 
 
 def _seed(c):

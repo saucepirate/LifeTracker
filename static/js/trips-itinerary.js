@@ -117,7 +117,6 @@ function _buildLeft(panel, days, isPast) {
     const moreCount = entries.length - 3;
     const more = moreCount > 0 ? `<div class="idc-more">+${moreCount} more</div>` : '';
     const empty = entries.length === 0 ? '<div class="idc-empty">+ Add</div>' : '';
-    const summary = _daySummary(entries);
 
     const journal = isPast
       ? `<textarea class="idc-journal" data-date="${date}" placeholder="How did this day go…">${_esc(_itinData.day_notes?.[date] || '')}</textarea>`
@@ -131,7 +130,6 @@ function _buildLeft(panel, days, isPast) {
         </div>
         <span class="idc-date">${dateLabel}</span>
       </div>
-      ${summary ? `<div class="idc-summary">${summary}</div>` : ''}
       <div class="idc-entries">${previewRows}${more}${empty}</div>
       ${journal}
     </div>`;
@@ -196,7 +194,7 @@ function _buildRight(container) {
 
   container.innerHTML = `
     <div class="itin-unsched-section">
-      <div class="itin-section-label">Unscheduled</div>
+      <div class="itin-section-label">All Day</div>
       <div class="itin-unsched-list" id="itin-unsched-list">
         ${untimed.map(e => {
           const t = ITIN_TYPES[e.entry_type] || ITIN_TYPES.Other;
@@ -579,7 +577,7 @@ function _openEntryModal(entry) {
     body,
     async () => {
       const type  = document.getElementById('itin-type').value;
-      const date  = document.getElementById('itin-date').value.trim();
+      const date  = getDateVal(document.getElementById('itin-date'));
       const title = document.getElementById('itin-title').value.trim();
       if (!date || !title) { alert('Date and Title are required.'); return false; }
       const start = document.getElementById('itin-start').value || null;
