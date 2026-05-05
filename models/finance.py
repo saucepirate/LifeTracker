@@ -191,6 +191,5 @@ class ExpenditureUpdate(BaseModel):
 class PlanningAssumptions(BaseModel):
     return_rate: Optional[float] = None
     inflation_rate: Optional[float] = None
-    birth_date: Optional[str] = None
     target_retire_age: Optional[int] = None
     plan_mode: Optional[str] = None        # 'safe' | 'aggressive'

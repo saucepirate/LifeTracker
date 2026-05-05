@@ -20,7 +20,7 @@ let _finPlanState = {
   // Horizon
   yearsForward: 30,
   // Raise step-up
-  annualRaiseRate: 3, raiseCap: 8, savingsOfRaise: 50,
+  annualRaiseRate: 3, salaryCap: 0, savingsOfRaise: 50,
   // Read-only from API
   netWorth: null, expenditures: [],
   monthlyDebtPayments: 0, cashBalance: 0, investmentsBalance: 0,
@@ -137,7 +137,18 @@ function _finRangeFor(key) {
 
 async function _renderFinOverview(c) {
   const rangeKey = localStorage.getItem('fin_range') || '3m';
-  const { start, end } = _finRangeFor(rangeKey);
+  let start, end;
+  if (rangeKey === 'custom') {
+    start = _isoDateOnly(localStorage.getItem('fin_range_from') || '');
+    end   = _isoDateOnly(localStorage.getItem('fin_range_to')   || '');
+    if (!start || !end) {
+      // Fall back to 3m until the user fills in dates
+      const fb = _finRangeFor('3m');
+      start = fb.start; end = fb.end;
+    }
+  } else {
+    ({ start, end } = _finRangeFor(rangeKey));
+  }
 
   let d;
   try { d = await apiFetch('GET', `/finance/dashboard?start=${start}&end=${end}`); }
@@ -196,8 +207,10 @@ async function _renderFinOverview(c) {
       ${k.sub ? `<div class="stat-sub">${escHtml(k.sub)}</div>` : ''}
     </div>`).join('');
 
-  // Range pills
-  const pillsHTML = FIN_RANGE_PRESETS.map(p =>
+  // Range pills (presets + custom)
+  const customFrom = localStorage.getItem('fin_range_from') || start;
+  const customTo   = localStorage.getItem('fin_range_to')   || end;
+  const pillsHTML = [...FIN_RANGE_PRESETS, { key: 'custom', label: 'Custom' }].map(p =>
     `<button class="fin-range-pill${p.key === rangeKey ? ' active' : ''}" data-range="${p.key}">${escHtml(p.label)}</button>`
   ).join('');
 
@@ -217,7 +230,7 @@ async function _renderFinOverview(c) {
       </div>`;
   }).join('') : `<div class="di-empty">No spending data in this range.</div>`;
 
-  const flowHTML        = _renderFlowsSVG(d.monthly_flows || []);
+  const flowHTML        = _renderFlowsSVG(d.monthly_flows || [], d.range_start, d.range_end);
   const catTrends       = d.category_trends || [];
   const catTrendHTML    = _renderCategoryTrendSVG(catTrends, d.range_start, d.range_end, d.span_days || 90);
   const catTrendLegend  = catTrends.map(ct => {
@@ -256,55 +269,61 @@ async function _renderFinOverview(c) {
   c.innerHTML = `
     <div class="fin-range-bar">
       <div class="fin-range-pills">${pillsHTML}</div>
-      <span class="fin-range-dates">${_fmtRangeLabel(d.range_start, d.range_end)}</span>
+      <span id="fin-ov-custom" style="display:${rangeKey === 'custom' ? 'flex' : 'none'};align-items:center;gap:6px">
+        <label style="font-size:13px;color:var(--text-muted)">From <input type="date" id="fin-ov-from" class="form-input" style="width:150px;padding:3px 8px" value="${customFrom}"></label>
+        <label style="font-size:13px;color:var(--text-muted)">To <input type="date" id="fin-ov-to" class="form-input" style="width:150px;padding:3px 8px" value="${customTo}"></label>
+        <button class="btn btn-secondary btn-sm" id="fin-ov-load">Load</button>
+      </span>
+      <span class="fin-range-dates">${rangeKey !== 'custom' ? _fmtRangeLabel(d.range_start, d.range_end) : _fmtRangeLabel(start, end)}</span>
     </div>
 
     <div class="stats-row" style="grid-template-columns:repeat(${kpis.length},1fr)">${kpisHTML}</div>
 
-    <div class="fin-grid-2">
-      <div class="fin-panel">
-        <div class="fin-panel-header">
-          <h3>Income vs spending — last 12 months</h3>
-          <div class="fin-flow-legend">
-            <span><i class="fin-flow-dot fin-flow-dot--income"></i>Income</span>
-            <span><i class="fin-flow-dot fin-flow-dot--spend"></i>Spending</span>
+    <div class="fin-grid-2" style="align-items:start">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="fin-panel">
+          <div class="fin-panel-header">
+            <h3>Income vs spending</h3>
+            <div class="fin-flow-legend">
+              <span><i class="fin-flow-dot fin-flow-dot--income"></i>Income</span>
+              <span><i class="fin-flow-dot fin-flow-dot--spend"></i>Spending</span>
+            </div>
           </div>
+          <div class="fin-panel-body" style="padding:0 0 4px">${flowHTML}</div>
         </div>
-        <div class="fin-panel-body">${flowHTML}</div>
+        <div class="fin-panel">
+          <div class="fin-panel-header">
+            <h3>Spending trends</h3>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">${catTrendLegend}</div>
+          </div>
+          <div class="fin-panel-body" style="padding:10px 14px">${catTrendHTML}</div>
+        </div>
       </div>
-      <div class="fin-panel">
-        <div class="fin-panel-header">
-          <h3>Spending by category</h3>
-          <span style="color:var(--text-muted);font-size:13px">${_fmtMoney(totalSpend)} total</span>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="fin-panel">
+          <div class="fin-panel-header">
+            <h3>Spending by category</h3>
+            <span style="color:var(--text-muted);font-size:13px">${_fmtMoney(totalSpend)} total</span>
+          </div>
+          <div class="fin-panel-body">${catRowsHTML}</div>
         </div>
-        <div class="fin-panel-body" style="max-height:420px;overflow:auto">${catRowsHTML}</div>
+        <div class="fin-panel">
+          <div class="fin-panel-header">
+            <h3>Wealth breakdown</h3>
+            <span class="fin-link" id="fin-go-wealth">Manage →</span>
+          </div>
+          <div class="fin-panel-body">${_wealthBreakdownHTML(wb)}</div>
+        </div>
       </div>
     </div>
 
     <div class="fin-grid-2">
-      <div class="fin-panel">
-        <div class="fin-panel-header">
-          <h3>Spending trends</h3>
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">${catTrendLegend}</div>
-        </div>
-        <div class="fin-panel-body" style="padding:10px 14px">${catTrendHTML}</div>
-      </div>
       <div class="fin-panel">
         <div class="fin-panel-header">
           <h3>Top merchants</h3>
           <span class="fin-link" id="fin-go-txns">View all transactions →</span>
         </div>
         <div class="fin-panel-body">${merchHTML}</div>
-      </div>
-    </div>
-
-    <div class="fin-grid-2">
-      <div class="fin-panel">
-        <div class="fin-panel-header">
-          <h3>Wealth breakdown</h3>
-          <span class="fin-link" id="fin-go-wealth">Manage →</span>
-        </div>
-        <div class="fin-panel-body">${_wealthBreakdownHTML(wb)}</div>
       </div>
       <div class="fin-panel">
         <div class="fin-panel-header">
@@ -318,8 +337,23 @@ async function _renderFinOverview(c) {
   c.querySelectorAll('.fin-range-pill').forEach(p =>
     p.addEventListener('click', () => {
       localStorage.setItem('fin_range', p.dataset.range);
-      _renderFinOverview(c);
+      if (p.dataset.range !== 'custom') {
+        _renderFinOverview(c);
+      } else {
+        c.querySelectorAll('.fin-range-pill').forEach(b => b.classList.toggle('active', b === p));
+        c.querySelector('#fin-ov-custom').style.display = 'flex';
+        c.querySelector('.fin-range-dates').textContent = '';
+      }
     }));
+  c.querySelector('#fin-ov-load')?.addEventListener('click', () => {
+    const from = _isoDateOnly(c.querySelector('#fin-ov-from').value);
+    const to   = _isoDateOnly(c.querySelector('#fin-ov-to').value);
+    if (!from || !to) { alert('Please select both a start and end date.'); return; }
+    if (from > to) { alert('Start date must be before end date.'); return; }
+    localStorage.setItem('fin_range_from', from);
+    localStorage.setItem('fin_range_to',   to);
+    _renderFinOverview(c);
+  });
   c.querySelector('#fin-go-txns')?.addEventListener('click', () => _setFinView('transactions'));
   c.querySelector('#fin-go-goals')?.addEventListener('click', () => _setFinView('planning'));
   c.querySelector('#fin-go-wealth')?.addEventListener('click', () => _setFinView('wealth'));
@@ -351,67 +385,76 @@ function _wealthBreakdownHTML(wb) {
   return html;
 }
 
-function _renderFlowsSVG(flows) {
-  if (!flows.length) return `<div class="di-empty" style="padding:40px 0">No data — import transactions or add income</div>`;
-  // Pad to last 12 calendar months so the chart always has 12 slots
-  const today = new Date();
+function _renderFlowsSVG(flows, rangeStart, rangeEnd) {
+  // Build monthly buckets from the actual selected range
+  const s = rangeStart ? new Date(rangeStart + 'T00:00:00') : (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() - 11, 1); })();
+  const e = rangeEnd   ? new Date(rangeEnd   + 'T00:00:00') : new Date();
   const buckets = [];
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    buckets.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+  let cur = new Date(s.getFullYear(), s.getMonth(), 1);
+  while (cur <= e && buckets.length < 36) {
+    buckets.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}`);
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
   }
+  if (!buckets.length) buckets.push(`${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,'0')}`);
+
   const map = {};
   flows.forEach(f => { map[f.bucket] = f; });
-  const rows = buckets.map(b => ({
-    bucket: b,
-    income: map[b]?.income || 0,
-    spend:  map[b]?.spend  || 0,
-  }));
+
+  // Only include months that have actual data — skip zero-value months to avoid empty bars
+  const rows = buckets
+    .map(b => ({ bucket: b, income: map[b]?.income || 0, spend: map[b]?.spend || 0 }))
+    .filter(r => r.income > 0 || r.spend > 0);
+
+  if (!rows.length) return `<div class="di-empty" style="padding:40px 0">No data — import transactions or add income</div>`;
+
   const max = Math.max(...rows.map(r => Math.max(r.income, r.spend)), 50);
+  const n   = rows.length;
 
-  // Tighter padding so bars fill the container edge-to-edge
-  const W = 600, H = 210, PAD_L = 44, PAD_R = 6, PAD_T = 10, PAD_B = 24;
-  const innerW = W - PAD_L - PAD_R, innerH = H - PAD_T - PAD_B;
-  const n = rows.length;
+  const W = 600, PAD_L = 44, PAD_R = 6, PAD_T = 10, PAD_B = 20;
+  const CHART_H = 176;  // fixed chart area height
+  const H = PAD_T + CHART_H + PAD_B;
+  const innerW = W - PAD_L - PAD_R;
   const slot = innerW / n;
-  const barW = Math.max(8, slot * 0.38);
+  const barW = Math.max(4, Math.min(slot * 0.38, 30));
 
-  const yFor = v => PAD_T + innerH * (1 - v / max);
+  const baseline = PAD_T + CHART_H;
+  const yFor = v => PAD_T + CHART_H * (1 - v / max);
 
-  // Distinct gridlines at 5 evenly-spaced levels, solid, higher opacity
-  const grid = [0.2, 0.4, 0.6, 0.8, 1.0].map(p => {
-    const y = PAD_T + innerH * (1 - p);
-    return `<line x1="${PAD_L}" y1="${y.toFixed(1)}" x2="${W - PAD_R}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.11)" stroke-width="1"/>`;
+  const grid = [0.25, 0.5, 0.75, 1.0].map(p => {
+    const y = (PAD_T + CHART_H * (1 - p)).toFixed(1);
+    return `<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>`;
   }).join('');
 
-  // Vibrant neon bars
+  // Baseline (x-axis)
+  const axisLine = `<line x1="${PAD_L}" y1="${baseline}" x2="${W - PAD_R}" y2="${baseline}" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>`;
+
   const bars = rows.map((r, i) => {
-    const cx  = PAD_L + slot * (i + 0.5);
+    const cx   = PAD_L + slot * (i + 0.5);
     const incX = cx - barW - 1, spdX = cx + 1;
     const incY = yFor(r.income), spdY = yFor(r.spend);
-    const incH = (PAD_T + innerH) - incY, spdH = (PAD_T + innerH) - spdY;
+    const incH = baseline - incY, spdH = baseline - spdY;
     return `
-      <rect x="${incX.toFixed(1)}" y="${incY.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(1,incH).toFixed(1)}" rx="2" fill="#00FF88" fill-opacity="0.80"/>
-      <rect x="${spdX.toFixed(1)}" y="${spdY.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(1,spdH).toFixed(1)}" rx="2" fill="#FF2D55" fill-opacity="0.85"/>`;
+      <rect x="${incX.toFixed(1)}" y="${incY.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(1, incH).toFixed(1)}" rx="2" fill="#00FF88" fill-opacity="0.80"/>
+      <rect x="${spdX.toFixed(1)}" y="${spdY.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(1, spdH).toFixed(1)}" rx="2" fill="#FF2D55" fill-opacity="0.85"/>`;
   }).join('');
 
-  // Y-axis labels at 0, 50%, 100%
-  const yLbls = [0, 0.5, 1].map(p => {
+  const yLbls = [0.5, 1].map(p => {
     const v = max * p;
-    return `<text x="${PAD_L-5}" y="${yFor(v)+4}" text-anchor="end" fill="rgba(255,255,255,0.38)" font-size="11">$${_fmtAxisNum(v)}</text>`;
+    return `<text x="${PAD_L - 5}" y="${yFor(v) + 4}" text-anchor="end" fill="rgba(255,255,255,0.38)" font-size="11">$${_fmtAxisNum(v)}</text>`;
   }).join('');
 
-  // X labels: every other month to avoid overlap
+  // Adaptive label density
+  const every = n > 18 ? 3 : n > 9 ? 2 : 1;
   const xLbls = rows.map((r, i) => {
-    if (i % 2 !== 0 && i !== n - 1) return '';
-    const [y, m] = r.bucket.split('-');
-    const txt = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+    if (i % every !== 0 && i !== n - 1) return '';
+    const [yr, mo] = r.bucket.split('-');
+    const txt = new Date(parseInt(yr), parseInt(mo) - 1, 1).toLocaleDateString('en-US', { month: 'short', year: n > 12 ? '2-digit' : undefined });
     const x = PAD_L + slot * (i + 0.5);
-    return `<text x="${x.toFixed(1)}" y="${H - 6}" text-anchor="middle" fill="rgba(255,255,255,0.38)" font-size="11">${escHtml(txt)}</text>`;
+    return `<text x="${x.toFixed(1)}" y="${baseline + 14}" text-anchor="middle" fill="rgba(255,255,255,0.38)" font-size="11">${escHtml(txt)}</text>`;
   }).join('');
 
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
-    ${grid}${bars}${yLbls}${xLbls}
+    ${grid}${axisLine}${bars}${yLbls}${xLbls}
   </svg>`;
 }
 
@@ -1757,9 +1800,9 @@ async function _renderFinPlanning(c) {
               <div class="fin-plan-hint">expected / yr</div>
             </div>
             <div class="fin-plan-kv">
-              <div class="fin-plan-label">Raise cap</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-raise-cap" type="number" step="0.5" min="0" max="30" value="${s.raiseCap ?? 8}"><span class="fin-plan-suffix">%</span></div>
-              <div class="fin-plan-hint">max per year</div>
+              <div class="fin-plan-label">Salary cap / mo</div>
+              <div class="fin-plan-input-wrap"><span class="fin-plan-prefix">$</span><input class="fin-plan-input" id="plan-salary-cap" type="number" step="100" min="0" value="${s.salaryCap ?? 0}"></div>
+              <div class="fin-plan-hint">${(s.salaryCap ?? 0) > 0 ? `raises stop at $${(s.salaryCap).toLocaleString()}/mo` : 'no ceiling'}</div>
             </div>
             <div class="fin-plan-kv">
               <div class="fin-plan-label">% raise saved</div>
@@ -1775,10 +1818,10 @@ async function _renderFinPlanning(c) {
               <div class="fin-plan-input-wrap"><span class="fin-plan-prefix">$</span><input class="fin-plan-input" id="plan-spend" type="number" step="1" value="${Math.round(s.monthlySpend || 0)}"></div>
               <div class="fin-plan-hint">90-day avg</div>
             </div>
-            <div class="fin-plan-kv">
-              <div class="fin-plan-label">Birth date</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-birth-date" type="date" value="${s.birthDate || ''}" style="font-size:14px;font-weight:600;min-width:0;width:100%"></div>
-              <div class="fin-plan-hint">${age !== null ? `age ${age}` : 'unlocks glide path'}</div>
+            <div class="fin-plan-kv" style="cursor:default">
+              <div class="fin-plan-label">Current age</div>
+              <div style="font-size:20px;font-weight:700;line-height:1.2;color:${age !== null ? 'var(--text-primary)' : 'var(--text-muted)'};padding:2px 0">${age !== null ? age : '—'}</div>
+              <div class="fin-plan-hint" style="color:var(--neon-blue);cursor:pointer" onclick="loadPage('settings')">${age !== null ? `born ${s.birthDate}` : 'set birthday in Settings →'}</div>
             </div>
             <div class="fin-plan-kv">
               <div class="fin-plan-label">Target retire age</div>
@@ -1869,8 +1912,8 @@ async function _renderFinPlanning(c) {
         salaryIncome: inp.salary, otherIncome: inp.otherIncome,
         monthlySpend: inp.spend,  returnRate: inp.ret, inflationRate: inp.inf,
         investmentFrac: Math.round(inp.invFrac * 100), yearsForward: inp.years,
-        annualRaiseRate: inp.raiseRate, raiseCap: inp.raiseCap, savingsOfRaise: inp.raiseSaved,
-        birthDate: inp.birthDate, targetRetireAge: inp.targetRetireAge,
+        annualRaiseRate: inp.raiseRate, salaryCap: inp.salaryCap, savingsOfRaise: inp.raiseSaved,
+        targetRetireAge: inp.targetRetireAge,
         planMode: mode,
       });
       try { await apiFetch('PATCH', '/finance/planning/assumptions', { plan_mode: mode }); }
@@ -1885,21 +1928,21 @@ async function _renderFinPlanning(c) {
     try {
       await apiFetch('PATCH', '/finance/planning/assumptions', {
         return_rate: inp.ret, inflation_rate: inp.inf,
-        birth_date: inp.birthDate || null, target_retire_age: inp.targetRetireAge,
+        target_retire_age: inp.targetRetireAge,
       });
-      Object.assign(_finPlanState, { returnRate: inp.ret, inflationRate: inp.inf, birthDate: inp.birthDate, targetRetireAge: inp.targetRetireAge });
+      Object.assign(_finPlanState, { returnRate: inp.ret, inflationRate: inp.inf, targetRetireAge: inp.targetRetireAge });
     } catch(e) { alert('Error: ' + e.message); }
   });
 
   // Live-update on any input change
   ['plan-salary','plan-other-income','plan-spend','plan-return','plan-inflation',
-   'plan-inv-frac','plan-years','plan-raise-rate','plan-raise-cap','plan-raise-saved',
-   'plan-birth-date','plan-retire-age'].forEach(id => {
+   'plan-inv-frac','plan-years','plan-raise-rate','plan-salary-cap','plan-raise-saved',
+   'plan-retire-age'].forEach(id => {
     c.querySelector('#' + id)?.addEventListener('input', () => _redrawProjection(c));
   });
 
   c.querySelector('#plan-exp-add').addEventListener('click', () =>
-    _openExpModal(null, () => { _finPlanState.loaded = false; _setFinView('planning'); }));
+    _openExpModal(null, () => _refreshExpenditures(c)));
 
   _renderExpList(c);
   _redrawProjection(c);
@@ -1935,19 +1978,19 @@ function _readPlanInputs(c) {
   const invFrac     = (parseFloat(c.querySelector('#plan-inv-frac')?.value)    || 0) / 100;
   const years       = Math.min(60, Math.max(1, parseInt(c.querySelector('#plan-years')?.value) || 30));
   const raiseRate   = Math.max(0, parseFloat(c.querySelector('#plan-raise-rate')?.value)  || 0);
-  const raiseCap    = Math.max(0, parseFloat(c.querySelector('#plan-raise-cap')?.value)   || 8);
+  const salaryCap   = Math.max(0, parseFloat(c.querySelector('#plan-salary-cap')?.value)  || 0);
   const raiseSaved  = Math.max(0, Math.min(100, parseFloat(c.querySelector('#plan-raise-saved')?.value) ?? 50));
-  const birthDate   = c.querySelector('#plan-birth-date')?.value || '';
+  const birthDate   = _finPlanState.birthDate || '';
   const targetRetireAge = Math.max(40, Math.min(85, parseInt(c.querySelector('#plan-retire-age')?.value) || 62));
   const planMode    = _finPlanState.planMode || 'safe';
   const currentAge  = _calcAge(birthDate);
-  return { salary, otherIncome, totalIncome: salary + otherIncome, spend, ret, inf, invFrac, years, raiseRate, raiseCap, raiseSaved, birthDate, targetRetireAge, planMode, currentAge };
+  return { salary, otherIncome, totalIncome: salary + otherIncome, spend, ret, inf, invFrac, years, raiseRate, salaryCap, raiseSaved, birthDate, targetRetireAge, planMode, currentAge };
 }
 
 function _redrawProjection(c) {
   const inp = _readPlanInputs(c);
-  const { salary, otherIncome, totalIncome, spend, ret, inf, invFrac, years, raiseRate, raiseCap, raiseSaved, planMode, currentAge, targetRetireAge } = inp;
-  Object.assign(_finPlanState, { annualRaiseRate: raiseRate, raiseCap, savingsOfRaise: raiseSaved });
+  const { salary, otherIncome, totalIncome, spend, ret, inf, invFrac, years, raiseRate, salaryCap, raiseSaved, planMode, currentAge, targetRetireAge } = inp;
+  Object.assign(_finPlanState, { annualRaiseRate: raiseRate, salaryCap, savingsOfRaise: raiseSaved });
   const nw   = _finPlanState.netWorth || 0;
   const exps = _finPlanState.expenditures || [];
 
@@ -1956,7 +1999,7 @@ function _redrawProjection(c) {
     salaryIncome: salary, otherIncome,
     monthlySpend: spend, returnRate: ret,
     planMode, currentAge, expenditures: exps, yearsForward: years,
-    annualRaiseRate: raiseRate, raiseCap, savingsOfRaise: raiseSaved,
+    annualRaiseRate: raiseRate, salaryCap, savingsOfRaise: raiseSaved,
   });
 
   const chartWrap = c.querySelector('#plan-chart-wrap');
@@ -1981,7 +2024,7 @@ function _redrawProjection(c) {
   if (glideEl) glideEl.innerHTML = _renderGlideTable(currentAge, targetRetireAge, planMode, years);
 }
 
-function _projectNetWorth({ netWorth, investmentFrac, salaryIncome = 0, otherIncome = 0, monthlySpend, returnRate, planMode = 'safe', currentAge = null, expenditures, yearsForward, annualRaiseRate = 0, raiseCap = 8, savingsOfRaise = 50 }) {
+function _projectNetWorth({ netWorth, investmentFrac, salaryIncome = 0, otherIncome = 0, monthlySpend, returnRate, planMode = 'safe', currentAge = null, expenditures, yearsForward, annualRaiseRate = 0, salaryCap = 0, savingsOfRaise = 50 }) {
   const fireMultiple   = planMode === 'aggressive' ? 25 : 28.57;
   const fireNumber     = monthlySpend * 12 * fireMultiple;
   const monthlyIncome  = salaryIncome + otherIncome;
@@ -2029,13 +2072,16 @@ function _projectNetWorth({ netWorth, investmentFrac, salaryIncome = 0, otherInc
       }
     }
 
-    // Annual step-up: apply capped raise to salary, split savings vs. lifestyle
+    // Annual step-up: grow salary by raise%, stop when salary cap is reached
     if (month % 12 === 0 && annualRaiseRate > 0) {
-      const cap          = raiseCap > 0 ? raiseCap : 30;
-      const effectiveRate = Math.min(annualRaiseRate, cap) / 100;
-      const raise        = stepSalary * effectiveRate;
-      stepSalary        += raise;
-      stepSavings       += raise * (savingsOfRaise / 100);
+      const capHit = salaryCap > 0 && stepSalary >= salaryCap;
+      if (!capHit) {
+        const prevSalary = stepSalary;
+        const raised     = stepSalary * (annualRaiseRate / 100);
+        stepSalary       = salaryCap > 0 ? Math.min(stepSalary + raised, salaryCap) : stepSalary + raised;
+        const actualRaise = stepSalary - prevSalary;
+        stepSavings      += actualRaise * (savingsOfRaise / 100);
+      }
     }
 
     if (month % 12 === 0) {
@@ -2106,14 +2152,21 @@ function _renderProjectionSVG({ points, retireYear, millionYear, retireYearStep,
     grid.push(`<line x1="${PAD_L}" y1="${y0}" x2="${W - PAD_R}" y2="${y0}" stroke="rgba(255,255,255,0.22)" stroke-width="1"/>`);
   }
 
-  // Expenditure vertical markers
+  // Expenditure vertical markers (rendered after lines so they appear on top)
   const today = new Date();
-  const expLines = (expenditures || []).filter(e => e.expected_date).map(e => {
+  const expMarkers = (expenditures || []).filter(e => e.expected_date).map((e, idx) => {
     const d = new Date(e.expected_date + 'T00:00:00');
     const yrFrac = (d.getFullYear() - today.getFullYear()) + (d.getMonth() - today.getMonth()) / 12;
     if (yrFrac < 0 || yrFrac > yearsForward) return '';
-    const x = xFor(yrFrac).toFixed(1);
-    return `<line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H - PAD_B}" stroke="rgba(255,45,85,0.38)" stroke-width="1" stroke-dasharray="3,3"/>`;
+    const x     = parseFloat(xFor(yrFrac).toFixed(1));
+    const anchor = x > W * 0.72 ? 'end' : 'start';
+    const lx    = anchor === 'start' ? x + 4 : x - 4;
+    const ly    = PAD_T + 12 + (idx % 3) * 13;
+    const label = escHtml(`${e.name}: ${_fmtMoneyCompact(e.amount)}`);
+    return `
+      <line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H - PAD_B}" stroke="rgba(255,80,80,0.55)" stroke-width="1.5" stroke-dasharray="4,3"/>
+      <rect x="${anchor === 'start' ? lx - 2 : lx - label.length * 5.4}" y="${ly - 10}" width="${label.length * 5.4 + 4}" height="13" rx="2" fill="rgba(0,0,0,0.55)"/>
+      <text x="${lx}" y="${ly}" text-anchor="${anchor}" fill="rgba(255,100,100,0.95)" font-size="10" font-weight="600">${label}</text>`;
   }).join('');
 
   // Path builder
@@ -2199,9 +2252,9 @@ function _renderProjectionSVG({ points, retireYear, millionYear, retireYearStep,
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
     ${defs}
     ${grid.join('')}
-    ${expLines}
     ${growthFill}
     ${flatLine}${growthLine}${stepLine}
+    ${expMarkers}
     ${retireMarker}${millionMarker}
     ${xLbls.join('')}
   </svg>`;
@@ -2420,6 +2473,15 @@ function _renderGlideTable(currentAge, targetRetireAge, mode, yearsForward) {
     </div>`;
 }
 
+async function _refreshExpenditures(c) {
+  try {
+    const { items } = await apiFetch('GET', '/finance/planning/expenditures');
+    _finPlanState.expenditures = items || [];
+  } catch(e) { /* keep existing */ }
+  _renderExpList(c);
+  _redrawProjection(c);
+}
+
 function _renderExpList(c) {
   const exps = _finPlanState.expenditures || [];
   const el = c.querySelector('#plan-exp-list');
@@ -2439,15 +2501,14 @@ function _renderExpList(c) {
   el.querySelectorAll('.plan-exp-edit').forEach(btn =>
     btn.addEventListener('click', () => {
       const exp = exps.find(e => e.id === parseInt(btn.dataset.id));
-      _openExpModal(exp, () => { _finPlanState.loaded = false; _setFinView('planning'); });
+      _openExpModal(exp, () => _refreshExpenditures(c));
     }));
   el.querySelectorAll('.plan-exp-del').forEach(btn =>
     btn.addEventListener('click', async () => {
       if (!confirm('Delete this expenditure?')) return;
       try {
         await apiFetch('DELETE', `/finance/planning/expenditures/${btn.dataset.id}`);
-        _finPlanState.loaded = false;
-        _setFinView('planning');
+        await _refreshExpenditures(c);
       } catch(e) { alert('Error: ' + e.message); }
     }));
 }

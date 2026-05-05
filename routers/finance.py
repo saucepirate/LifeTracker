@@ -1004,9 +1004,9 @@ def get_planning():
 
     return_rate    = _setting('plan_return_rate',    7.0)
     inflation_rate = _setting('plan_inflation_rate', 2.5)
-    birth_date     = _setting_str('fin_birth_date')
+    birth_date     = _setting_str('birthday')
     try:
-        target_retire_age = int(_setting('fin_retire_age', 62))
+        target_retire_age = int(_setting('target_retirement_age', 62))
     except Exception:
         target_retire_age = 62
     plan_mode      = _setting_str('fin_plan_mode', 'safe')
@@ -1042,11 +1042,10 @@ def get_planning():
 def patch_planning_assumptions(body: PlanningAssumptions):
     conn = database.get_connection()
     updates = {
-        'plan_return_rate':    str(body.return_rate)        if body.return_rate    is not None else None,
-        'plan_inflation_rate': str(body.inflation_rate)     if body.inflation_rate is not None else None,
-        'fin_birth_date':      body.birth_date              if body.birth_date     is not None else None,
-        'fin_retire_age':      str(body.target_retire_age)  if body.target_retire_age is not None else None,
-        'fin_plan_mode':       body.plan_mode               if body.plan_mode      is not None else None,
+        'plan_return_rate':       str(body.return_rate)        if body.return_rate        is not None else None,
+        'plan_inflation_rate':    str(body.inflation_rate)     if body.inflation_rate     is not None else None,
+        'target_retirement_age':  str(body.target_retire_age)  if body.target_retire_age  is not None else None,
+        'fin_plan_mode':          body.plan_mode               if body.plan_mode           is not None else None,
     }
     for key, val in updates.items():
         if val is not None:
@@ -1117,11 +1116,19 @@ def finance_dashboard(start: Optional[str] = None, end: Optional[str] = None):
         end = today_iso
     if not start:
         start = (today - timedelta(days=89)).isoformat()
-    range_start = start
-    range_end = end
+    def _parse_date(s, fallback):
+        for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%Y/%m/%d'):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except (ValueError, TypeError):
+                pass
+        return fallback
+
+    range_start = _parse_date(start, today - timedelta(days=89)).isoformat()
+    range_end   = _parse_date(end,   today).isoformat()
     # Previous-period comparison: same length window immediately before
-    rs = datetime.strptime(range_start, '%Y-%m-%d').date()
-    re_ = datetime.strptime(range_end, '%Y-%m-%d').date()
+    rs = _parse_date(range_start, today - timedelta(days=89))
+    re_ = _parse_date(range_end, today)
     span_days = (re_ - rs).days + 1
     prev_end = (rs - timedelta(days=1))
     prev_start = (prev_end - timedelta(days=span_days - 1))
