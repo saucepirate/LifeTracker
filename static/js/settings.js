@@ -34,21 +34,32 @@ registerPage('settings', async function(content) {
 
         <div class="settings-card">
           <div class="settings-card-title">Financial Profile</div>
+          <div class="settings-hint" style="margin-bottom:12px;color:var(--text-muted)">Used by the Finance → Planning tab for projections and retirement modeling.</div>
           <div class="settings-row">
-            <label class="settings-label">Birthday</label>
+            <label class="settings-label">Birthday <span id="s-birthday-status" style="font-size:11px;font-weight:400;color:var(--neon-amber)"></span></label>
             <div style="display:flex;gap:8px;align-items:center">
               <input type="date" class="form-input" id="s-birthday" style="max-width:200px">
             </div>
-            <div class="settings-hint">Used to calculate age and years to retirement.</div>
+            <div class="settings-hint">Age-based glide path and retirement countdown require this.</div>
           </div>
           <div class="settings-row">
             <label class="settings-label">Target retirement age</label>
             <div style="display:flex;gap:8px;align-items:center">
               <input type="number" class="form-input" id="s-retire-age" min="40" max="100" placeholder="65" style="max-width:120px">
             </div>
+            <div class="settings-hint">Sets the retire line on your projection chart.</div>
           </div>
           <div class="settings-row">
-            <button class="btn btn-primary btn-sm" id="s-fin-save">Save profile</button>
+            <label class="settings-label">Min cash on hand <span id="s-mincash-status" style="font-size:11px;font-weight:400;color:var(--neon-amber)"></span></label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="color:var(--text-secondary);font-size:14px">$</span>
+              <input type="number" class="form-input" id="s-min-cash" min="0" step="500" placeholder="0" style="max-width:160px">
+            </div>
+            <div class="settings-hint">Cash you keep as a buffer — excluded when computing Invested %. Set to your emergency fund amount.</div>
+          </div>
+          <div class="settings-row">
+            <button class="btn btn-primary btn-sm" id="s-fin-save">Save financial profile</button>
+            <span id="s-fin-saved" style="font-size:12px;color:var(--neon-green);margin-left:10px;opacity:0;transition:opacity 0.4s"></span>
           </div>
         </div>
 
@@ -98,18 +109,37 @@ registerPage('settings', async function(content) {
   });
 
   // Populate name + financial profile
-  document.getElementById('s-name').value = _settings.user_name || '';
-  document.getElementById('s-birthday').value   = _settings.birthday || '';
+  document.getElementById('s-name').value       = _settings.user_name || '';
+  document.getElementById('s-birthday').value   = _settings.birthday  || '';
   document.getElementById('s-retire-age').value = _settings.target_retirement_age || '';
+  document.getElementById('s-min-cash').value   = _settings.min_cash_balance || '';
+
+  // Show missing-field indicators
+  const bdStatus = document.getElementById('s-birthday-status');
+  const mcStatus = document.getElementById('s-mincash-status');
+  if (!_settings.birthday)       bdStatus.textContent = '(not set — needed for planning)';
+  if (!(_settings.min_cash_balance > 0)) mcStatus.textContent = '(not set)';
+
+  document.getElementById('s-birthday').addEventListener('input', () => {
+    bdStatus.textContent = '';
+  });
+  document.getElementById('s-min-cash').addEventListener('input', () => {
+    const v = parseFloat(document.getElementById('s-min-cash').value);
+    mcStatus.textContent = (!v || v <= 0) ? '(not set)' : '';
+  });
 
   document.getElementById('s-fin-save').addEventListener('click', async () => {
     const bd  = document.getElementById('s-birthday').value;
     const ra  = document.getElementById('s-retire-age').value;
+    const mc  = parseFloat(document.getElementById('s-min-cash').value) || 0;
     try {
       await apiFetch('PATCH', '/settings', {
-        values: { birthday: bd || '', target_retirement_age: ra || '' },
+        values: { birthday: bd || '', target_retirement_age: ra || '', min_cash_balance: String(mc) },
       });
-      _showToast('Financial profile saved.');
+      const saved = document.getElementById('s-fin-saved');
+      saved.textContent = 'Saved';
+      saved.style.opacity = '1';
+      setTimeout(() => { saved.style.opacity = '0'; }, 2000);
     } catch(e) { alert('Error: ' + e.message); }
   });
 

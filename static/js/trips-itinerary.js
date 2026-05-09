@@ -331,11 +331,13 @@ function _entryBlockHTML(entry, { col, totalCols }) {
   const height = Math.max((endMins - startMins) * TL_HOUR_H / 60, 22);
   const pct = 100 / totalCols;
   const isFree = t.free;
+  const sizeClass = height < 30 ? ' tl-entry--xs' : height < 50 ? ' tl-entry--sm' : '';
+  const showIcon = height >= 30;
 
-  return `<div class="tl-entry${isFree ? ' tl-entry-free' : ''}" data-id="${entry.id}"
+  return `<div class="tl-entry${isFree ? ' tl-entry-free' : ''}${sizeClass}" data-id="${entry.id}"
     style="top:${top}px;height:${height}px;left:calc(${col * pct}% + 2px);width:calc(${pct}% - 4px);--ec:${t.color}">
     <div class="tl-entry-body">
-      <span class="tl-entry-icon">${t.icon}</span>
+      ${showIcon ? `<span class="tl-entry-icon">${t.icon}</span>` : ''}
       <span class="tl-entry-name">${_esc(entry.title)}</span>
       ${height >= 44 && entry.location ? `<span class="tl-entry-loc">📍 ${_esc(entry.location)}</span>` : ''}
     </div>

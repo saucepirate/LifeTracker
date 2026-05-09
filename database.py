@@ -564,6 +564,7 @@ def init_db():
         "ALTER TABLE finance_holdings ADD COLUMN value REAL",
         "ALTER TABLE finance_transactions ADD COLUMN import_id INTEGER REFERENCES finance_imports(id) ON DELETE SET NULL",
         "ALTER TABLE finance_categories ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE finance_plan_expenditures ADD COLUMN recurrence_end_date TEXT",
     ]:
         try:
             conn.execute(ddl)

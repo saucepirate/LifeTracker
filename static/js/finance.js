@@ -11,19 +11,19 @@ let _fincState = { preset: '12m', from: null, to: null };
 // Planning tab state — loaded is false so we re-read API defaults on first visit
 let _finPlanState = {
   loaded: false,
-  // Income
-  salaryIncome: null, otherIncome: null,
+  // Income — from exponential trend
+  monthlyIncome: null, incomeByMonth: [], incomeTrendAnnualRate: 0, incomeTrendSlope: 0,
   // Spend & investment
   monthlySpend: null, returnRate: null, inflationRate: null, investmentFrac: null,
   // Life
-  birthDate: '', targetRetireAge: 62, planMode: 'safe',
+  birthDate: '', targetRetireAge: 62, riskPreset: 'balanced',
   // Horizon
   yearsForward: 30,
   // Raise step-up
   annualRaiseRate: 3, salaryCap: 0, savingsOfRaise: 50,
   // Read-only from API
   netWorth: null, expenditures: [],
-  monthlyDebtPayments: 0, cashBalance: 0, investmentsBalance: 0,
+  monthlyDebtPayments: 0, cashBalance: 0, investmentsBalance: 0, minCashBalance: 0,
 };
 
 function _fmtMoney(n) {
@@ -1734,163 +1734,248 @@ function _openFinGoalModal(existing) {
 }
 
 // ── Planning ─────────────────────────────────────────────────────────────────
+let _planSaveTimer = null;
+async function _debouncedPlanSave(c) {
+  clearTimeout(_planSaveTimer);
+  _planSaveTimer = setTimeout(async () => {
+    const inp = _readPlanInputs(c);
+    try {
+      await apiFetch('PATCH', '/finance/planning/assumptions', {
+        return_rate: inp.ret, inflation_rate: inp.inf,
+        target_retire_age: inp.targetRetireAge,
+        years_forward: inp.years, annual_raise_rate: inp.raiseRate,
+        salary_cap: inp.salaryCap, savings_of_raise: inp.raiseSaved,
+        investment_frac: inp.invFrac,
+      });
+    } catch(e) { /* silent */ }
+  }, 800);
+}
+
 async function _renderFinPlanning(c) {
   let plan;
   try { plan = await apiFetch('GET', '/finance/planning'); }
   catch(e) { c.innerHTML = `<div class="empty-state">${e.message}</div>`; return; }
 
   if (!_finPlanState.loaded) {
-    _finPlanState.salaryIncome   = plan.salary_last_month || plan.monthly_income;
-    _finPlanState.otherIncome    = plan.other_income_6mo  || 0;
-    _finPlanState.monthlySpend   = plan.monthly_spend;
-    _finPlanState.returnRate     = plan.return_rate;
-    _finPlanState.inflationRate  = plan.inflation_rate;
-    _finPlanState.investmentFrac = Math.round(plan.investment_frac * 100);
-    _finPlanState.birthDate      = plan.birth_date        || '';
-    _finPlanState.targetRetireAge = plan.target_retire_age || 62;
-    _finPlanState.planMode       = plan.plan_mode         || 'safe';
+    _finPlanState.returnRate      = plan.return_rate;
+    _finPlanState.inflationRate   = plan.inflation_rate;
+    _finPlanState.riskPreset      = plan.plan_mode    || 'balanced';
+    _finPlanState.annualRaiseRate = plan.annual_raise_rate ?? 3;
+    _finPlanState.salaryCap       = plan.salary_cap   ?? 0;
+    _finPlanState.savingsOfRaise  = plan.savings_of_raise ?? 50;
+    _finPlanState.yearsForward    = plan.years_forward ?? 30;
     _finPlanState.loaded = true;
   }
+  // Always refresh — these come from live data or user settings that can change between visits
+  _finPlanState.birthDate           = plan.birth_date   || '';
+  _finPlanState.targetRetireAge     = plan.target_retire_age || 62;
+  _finPlanState.monthlyIncome       = plan.monthly_income;
+  _finPlanState.monthlySpend        = plan.monthly_spend;
   _finPlanState.netWorth            = plan.net_worth;
-  _finPlanState.expenditures        = plan.expenditures        || [];
+  _finPlanState.investmentFrac      = plan.investment_frac;
+  _finPlanState.actualStocksPct     = plan.actual_stocks_pct ?? null;
+  _finPlanState.actualBondsPct      = plan.actual_bonds_pct  ?? null;
+  _finPlanState.actualCashPct       = plan.actual_cash_pct   ?? null;
+  _finPlanState.expenditures        = (plan.expenditures || []).map(e => ({ ...e, expected_date: _normDateISO(e.expected_date) || e.expected_date }));
   _finPlanState.monthlyDebtPayments = plan.monthly_debt_payments || 0;
   _finPlanState.cashBalance         = plan.cash_balance         || 0;
   _finPlanState.investmentsBalance  = plan.investments_balance  || 0;
+  _finPlanState.minCashBalance      = plan.min_cash_balance     ?? 0;
+  _finPlanState.incomeByMonth       = plan.income_by_month      || [];
+  _finPlanState.incomeTrendAnnualRate = plan.income_trend_annual_rate || 0;
+  _finPlanState.incomeTrendSlope    = plan.income_trend_slope   || 0;
 
-  const s   = _finPlanState;
-  const age = _calcAge(s.birthDate);
-  const glide       = age !== null ? _calcGlide(age, s.planMode) : null;
-  const fireMultiple = s.planMode === 'aggressive' ? 25 : 28.57;
-  const totalIncome = (s.salaryIncome || 0) + (s.otherIncome || 0);
-  const fireNumber  = Math.round((s.monthlySpend || 0) * 12 * fireMultiple);
-  const monthlyNet  = totalIncome - (s.monthlySpend || 0);
-  const savingsRate = totalIncome > 0 ? (monthlyNet / totalIncome * 100) : 0;
+  const s          = _finPlanState;
+  const age        = _calcAge(s.birthDate);
+  const preset     = s.riskPreset || 'balanced';
+  const glide      = age !== null ? _calcGlide(age, preset, (s.returnRate || 7) / 100) : null;
+  const fireMultiple = preset === 'conservative' ? 30 : preset === 'optimistic' ? 25 : 28.57;
+  const fireNumber = Math.round((s.monthlySpend || 0) * 12 * fireMultiple);
+  const monthlyNet = (s.monthlyIncome || 0) - (s.monthlySpend || 0);
   const yrsToTarget = age !== null ? Math.max(0, (s.targetRetireAge || 62) - age) : null;
+  const trendRate  = s.incomeTrendAnnualRate || 0;
+  const trendResult = _fitIncomeTrend(s.incomeByMonth);
+
+  const presetBtn = (p, label) =>
+    `<button class="fin-plan-preset-btn${preset === p ? ' active' : ''}" data-preset="${p}">${label}</button>`;
 
   c.innerHTML = `
     <div class="fin-plan-wrap">
-      <div class="fin-panel" style="margin-bottom:16px">
-        <div class="fin-panel-header">
-          <h3>Planning assumptions</h3>
-          <div style="display:flex;align-items:center;gap:10px">
-            <div class="tf-group">
-              <button class="tf-pill btn-sm plan-mode-btn${s.planMode !== 'aggressive' ? ' active' : ''}" data-mode="safe">Safe</button>
-              <button class="tf-pill btn-sm plan-mode-btn${s.planMode === 'aggressive' ? ' active' : ''}" data-mode="aggressive">Aggressive</button>
-            </div>
-            <button class="btn btn-secondary btn-sm" id="plan-save-btn">Save</button>
-          </div>
+
+      <div style="display:flex;align-items:center;margin-bottom:12px">
+        <div class="fin-plan-preset-group">
+          ${presetBtn('conservative', 'Conservative')}
+          ${presetBtn('balanced', 'Balanced')}
+          ${presetBtn('optimistic', 'Optimistic')}
         </div>
+      </div>
+
+      <div class="fin-panel" style="margin-bottom:14px">
         <div class="fin-panel-body">
 
-          <div class="fin-plan-section-row"><span>Income</span><div class="fin-plan-section-rule"></div></div>
-          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0">
+          <details open>
+          <summary class="fin-plan-section-row" style="cursor:pointer;list-style:none"><span>Income</span><div class="fin-plan-section-rule"></div></summary>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0">
             <div class="fin-plan-kv">
-              <div class="fin-plan-label">Salary / mo</div>
-              <div class="fin-plan-input-wrap"><span class="fin-plan-prefix">$</span><input class="fin-plan-input" id="plan-salary" type="number" step="1" value="${Math.round(s.salaryIncome || 0)}"></div>
-              <div class="fin-plan-hint">last month</div>
+              <div class="fin-plan-label">Projected income / mo</div>
+              <div style="display:flex;align-items:flex-end;gap:10px;margin:3px 0">
+                <div>
+                  <div style="font-size:20px;font-weight:700;line-height:1.1">${_fmtMoneyCompact(s.monthlyIncome || 0)}</div>
+                  <div class="fin-plan-hint" style="color:${trendRate >= 0 ? 'var(--neon-green)' : 'var(--neon-red)'}">
+                    trend: ${trendRate >= 0 ? '+' : ''}${trendRate.toFixed(1)}%/yr
+                    ${plan.income_source === 'sources' ? '(from income sources)' : ''}
+                  </div>
+                </div>
+                <div id="plan-income-spark">${_renderIncomeSpark(s.incomeByMonth, trendResult)}</div>
+              </div>
             </div>
-            <div class="fin-plan-kv">
-              <div class="fin-plan-label">Other income</div>
-              <div class="fin-plan-input-wrap"><span class="fin-plan-prefix">$</span><input class="fin-plan-input" id="plan-other-income" type="number" step="1" value="${Math.round(s.otherIncome || 0)}"></div>
-              <div class="fin-plan-hint">6-mo avg</div>
-            </div>
-            <div class="fin-plan-kv">
-              <div class="fin-plan-label">Annual raise</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-raise-rate" type="number" step="0.5" min="0" max="30" value="${s.annualRaiseRate ?? 3}"><span class="fin-plan-suffix">%</span></div>
-              <div class="fin-plan-hint">expected / yr</div>
-            </div>
-            <div class="fin-plan-kv">
-              <div class="fin-plan-label">Salary cap / mo</div>
-              <div class="fin-plan-input-wrap"><span class="fin-plan-prefix">$</span><input class="fin-plan-input" id="plan-salary-cap" type="number" step="100" min="0" value="${s.salaryCap ?? 0}"></div>
-              <div class="fin-plan-hint">${(s.salaryCap ?? 0) > 0 ? `raises stop at $${(s.salaryCap).toLocaleString()}/mo` : 'no ceiling'}</div>
-            </div>
-            <div class="fin-plan-kv">
-              <div class="fin-plan-label">% raise saved</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-raise-saved" type="number" step="5" min="0" max="100" value="${s.savingsOfRaise ?? 50}"><span class="fin-plan-suffix">%</span></div>
-              <div class="fin-plan-hint">rest is lifestyle</div>
-            </div>
-          </div>
-
-          <div class="fin-plan-section-row"><span>Life &amp; Horizon</span><div class="fin-plan-section-rule"></div></div>
-          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0">
             <div class="fin-plan-kv">
               <div class="fin-plan-label">Monthly spend</div>
-              <div class="fin-plan-input-wrap"><span class="fin-plan-prefix">$</span><input class="fin-plan-input" id="plan-spend" type="number" step="1" value="${Math.round(s.monthlySpend || 0)}"></div>
+              <div class="fin-plan-input-wrap"><span class="fin-plan-prefix">$</span>
+                <input class="fin-plan-input" id="plan-spend" type="number" step="1" value="${Math.round(s.monthlySpend || 0)}">
+              </div>
               <div class="fin-plan-hint">90-day avg</div>
-            </div>
-            <div class="fin-plan-kv" style="cursor:default">
-              <div class="fin-plan-label">Current age</div>
-              <div style="font-size:20px;font-weight:700;line-height:1.2;color:${age !== null ? 'var(--text-primary)' : 'var(--text-muted)'};padding:2px 0">${age !== null ? age : '—'}</div>
-              <div class="fin-plan-hint" style="color:var(--neon-blue);cursor:pointer" onclick="loadPage('settings')">${age !== null ? `born ${s.birthDate}` : 'set birthday in Settings →'}</div>
             </div>
             <div class="fin-plan-kv">
               <div class="fin-plan-label">Target retire age</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-retire-age" type="number" step="1" min="40" max="85" value="${s.targetRetireAge || 62}"></div>
-              <div class="fin-plan-hint">${yrsToTarget !== null ? `${yrsToTarget} yrs away` : 'set birth date first'}</div>
-            </div>
-            <div class="fin-plan-kv">
-              <div class="fin-plan-label">Invested %</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-inv-frac" type="number" step="1" min="0" max="100" value="${s.investmentFrac || 0}"><span class="fin-plan-suffix">%</span></div>
-              <div class="fin-plan-hint">of net worth</div>
+              <div class="fin-plan-input-wrap">
+                <input class="fin-plan-input" id="plan-retire-age" type="number" step="1" min="40" max="85" value="${s.targetRetireAge || 62}">
+              </div>
+              <div class="fin-plan-hint">${yrsToTarget !== null ? `${yrsToTarget} yrs away` : age !== null ? '' : '<span style="color:var(--neon-blue);cursor:pointer" onclick="loadPage(\'settings\')">set birthday in Settings →</span>'}</div>
             </div>
             <div class="fin-plan-kv">
               <div class="fin-plan-label">Years forward</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-years" type="number" step="1" min="1" max="60" value="${s.yearsForward || 30}"></div>
+              <div class="fin-plan-input-wrap">
+                <input class="fin-plan-input" id="plan-years" type="number" step="1" min="1" max="60" value="${s.yearsForward || 30}">
+              </div>
               <div class="fin-plan-hint">projection length</div>
             </div>
           </div>
+          </details>
 
-          <div class="fin-plan-section-row"><span>Investment model</span><div class="fin-plan-section-rule"></div></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:0">
+          <details open style="margin-top:12px">
+          <summary class="fin-plan-section-row" style="cursor:pointer;list-style:none"><span>Investment model</span><div class="fin-plan-section-rule"></div></summary>
+          ${s.cashBalance > 0 && !(s.minCashBalance > 0) ? `<div style="font-size:12px;color:var(--neon-amber);margin-bottom:8px">Min cash on hand not set — <span style="cursor:pointer;text-decoration:underline" onclick="loadPage('settings')">configure in Settings → Financial Profile</span> to improve Invested % accuracy.</div>` : ''}
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 2fr;gap:0">
             <div class="fin-plan-kv">
-              <div class="fin-plan-label">Annual return</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-return" type="number" step="0.1" min="0" max="30" value="${s.returnRate || 7}"><span class="fin-plan-suffix">%</span></div>
-              <div class="fin-plan-hint">${glide ? `glide path suggests ${(glide.annualReturn * 100).toFixed(1)}%` : 'investment growth rate'}</div>
+              <div class="fin-plan-label">Stock return</div>
+              <div class="fin-plan-input-wrap">
+                <input class="fin-plan-input" id="plan-return" type="number" step="0.1" min="0" max="30" value="${s.returnRate || 7}">
+                <span class="fin-plan-suffix">%</span>
+              </div>
+              <div class="fin-plan-hint" title="Expected annual stock market return. Bond return = half this. Allocation by preset + age.">${glide ? `blended age ${age}: ${(glide.annualReturn * 100).toFixed(1)}%` : 'bonds earn half · allocation varies by age'}</div>
             </div>
             <div class="fin-plan-kv">
               <div class="fin-plan-label">Inflation</div>
-              <div class="fin-plan-input-wrap"><input class="fin-plan-input" id="plan-inflation" type="number" step="0.1" min="0" max="20" value="${s.inflationRate || 2.5}"><span class="fin-plan-suffix">%</span></div>
-              <div class="fin-plan-hint">annual rate</div>
+              <div class="fin-plan-input-wrap">
+                <input class="fin-plan-input" id="plan-inflation" type="number" step="0.1" min="0" max="20" value="${s.inflationRate || 2.5}">
+                <span class="fin-plan-suffix">%</span>
+              </div>
+              <div class="fin-plan-hint">applied to spend</div>
             </div>
-            <div class="fin-plan-kv" style="border-left:1px solid var(--border-subtle);padding-left:16px">
-              <div class="fin-plan-label">${s.planMode === 'aggressive' ? 'Aggressive' : 'Safe'} allocation${age !== null ? ` — age ${age}` : ''}</div>
+            <div class="fin-plan-kv">
+              <div class="fin-plan-label">Invested %</div>
+              <div class="fin-plan-input-wrap">
+                <input class="fin-plan-input" id="plan-inv-frac" type="number" step="1" min="0" max="100" value="${Math.round(s.investmentFrac || 0)}">
+                <span class="fin-plan-suffix">%</span>
+              </div>
+              <div class="fin-plan-hint">${_fmtMoneyCompact(s.investmentsBalance || 0)} invested · ${_fmtMoneyCompact(s.cashBalance || 0)} cash${s.minCashBalance > 0 ? ` · ${_fmtMoneyCompact(s.minCashBalance)} reserved` : ''}</div>
+            </div>
+            <div class="fin-plan-kv" style="border-left:1px solid var(--border-subtle);padding-left:14px">
+              <div class="fin-plan-label">${preset} allocation${age !== null ? ` — age ${age}` : ''}</div>
               ${glide ? `
-              <div style="font-size:16px;font-weight:700;color:var(--text-primary);margin:3px 0;letter-spacing:-.01em">
+              <div style="font-size:16px;font-weight:700;margin:3px 0">
                 ${Math.round(glide.stocksPct * 100)}% <span style="color:rgba(77,159,255,0.9)">stocks</span>
                 &nbsp;/&nbsp;
                 ${Math.round(glide.bondsPct * 100)}% <span style="color:rgba(0,229,255,0.7)">bonds</span>
               </div>
-              <div class="fin-plan-hint">${(glide.annualReturn * 100).toFixed(1)}% blended return · FIRE at ${fireMultiple}× annual spend</div>
-              ` : `<div class="fin-plan-hint" style="margin-top:6px;font-size:12px">Enter birth date to see recommended stock/bond split · FIRE at ${fireMultiple}× annual spend</div>`}
+              <div class="fin-plan-hint">${(glide.annualReturn * 100).toFixed(1)}% blended · FIRE at ${fireMultiple}× spend</div>
+              ` : `<div class="fin-plan-hint" style="margin-top:6px">
+                Enter birth date in <span style="color:var(--neon-blue);cursor:pointer" onclick="loadPage('settings')">Settings</span> to see age-based allocation · FIRE at ${fireMultiple}× spend
+              </div>`}
             </div>
           </div>
+          </details>
 
-          <div class="fin-plan-derived">
+          <details class="fin-plan-advanced" style="margin-top:12px">
+            <summary>Income growth assumptions</summary>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-top:8px">
+              <div class="fin-plan-kv">
+                <div class="fin-plan-label">Annual raise</div>
+                <div class="fin-plan-input-wrap">
+                  <input class="fin-plan-input" id="plan-raise-rate" type="number" step="0.5" min="0" max="30" value="${s.annualRaiseRate ?? 3}">
+                  <span class="fin-plan-suffix">%</span>
+                </div>
+                <div class="fin-plan-hint">expected / yr</div>
+              </div>
+              <div class="fin-plan-kv">
+                <div class="fin-plan-label">Salary cap / mo</div>
+                <div class="fin-plan-input-wrap"><span class="fin-plan-prefix">$</span>
+                  <input class="fin-plan-input" id="plan-salary-cap" type="number" step="100" min="0" value="${s.salaryCap ?? 0}">
+                </div>
+                <div class="fin-plan-hint">${(s.salaryCap ?? 0) > 0 ? `raises stop at $${(s.salaryCap).toLocaleString()}/mo` : 'no ceiling'}</div>
+              </div>
+              <div class="fin-plan-kv">
+                <div class="fin-plan-label">% of raise saved</div>
+                <div class="fin-plan-input-wrap">
+                  <input class="fin-plan-input" id="plan-raise-saved" type="number" step="5" min="0" max="100" value="${s.savingsOfRaise ?? 50}">
+                  <span class="fin-plan-suffix">%</span>
+                </div>
+                <div class="fin-plan-hint">rest is lifestyle</div>
+              </div>
+            </div>
+          </details>
+
+          <div class="fin-plan-derived" style="margin-top:10px">
             Net worth: <strong>${_fmtMoneyCompact(s.netWorth)}</strong>
             &nbsp;·&nbsp; Monthly net: <strong style="color:${monthlyNet >= 0 ? 'var(--neon-green)' : 'var(--neon-red)'}">${_fmtMoney(monthlyNet)}</strong>
-            &nbsp;·&nbsp; Savings rate: <strong style="color:${savingsRate >= 20 ? 'var(--neon-green)' : savingsRate >= 10 ? 'var(--neon-amber)' : 'var(--neon-red)'}">${savingsRate.toFixed(1)}%</strong>
             &nbsp;·&nbsp; FIRE #: <strong style="color:var(--neon-cyan)">${_fmtMoneyCompact(fireNumber)}</strong>
           </div>
         </div>
       </div>
 
-      <div id="plan-kpis" style="margin-bottom:16px"></div>
+      <div id="plan-kpis" style="margin-bottom:14px"></div>
 
-      <div class="fin-panel" style="margin-bottom:16px">
+      <div class="fin-panel" style="margin-bottom:14px">
         <div class="fin-panel-header">
           <h3>Net worth projection</h3>
-          <div style="display:flex;gap:14px;align-items:center;font-size:13px;color:var(--text-secondary)">
-            <span style="display:flex;align-items:center;gap:5px"><svg width="22" height="3"><line x1="0" y1="1.5" x2="22" y2="1.5" stroke="#00FF88" stroke-width="2.5"/></svg> Growth + raises</span>
-            <span style="display:flex;align-items:center;gap:5px"><svg width="22" height="3"><line x1="0" y1="1.5" x2="22" y2="1.5" stroke="#00E5FF" stroke-width="2" stroke-dasharray="5,3"/></svg> Growth only</span>
-            <span style="display:flex;align-items:center;gap:5px"><svg width="22" height="3"><line x1="0" y1="1.5" x2="22" y2="1.5" stroke="rgba(255,184,0,0.7)" stroke-width="1.5" stroke-dasharray="3,4"/></svg> No growth</span>
+          <div style="display:flex;gap:12px;align-items:center;font-size:12px;color:var(--text-secondary);flex-wrap:wrap">
+            <span style="display:flex;align-items:center;gap:4px">
+              <svg width="14" height="10"><rect width="14" height="10" rx="2" fill="rgba(0,229,255,0.45)"/></svg>
+              Contributions
+            </span>
+            <span style="display:flex;align-items:center;gap:4px">
+              <svg width="14" height="10"><rect width="14" height="10" rx="2" fill="rgba(0,255,136,0.50)"/></svg>
+              Investment gains
+            </span>
+            <span title="When monthly investment returns first exceed your monthly income — your portfolio earns more than your job" style="display:flex;align-items:center;gap:4px;cursor:default">
+              <svg width="14" height="10"><line x1="0" y1="5" x2="14" y2="5" stroke="rgba(0,255,136,0.7)" stroke-width="1.5" stroke-dasharray="3,2"/></svg>
+              Compounding ⓘ
+            </span>
+            <span title="Planned retirement — salary contributions stop; portfolio grows or draws down on its own" style="display:flex;align-items:center;gap:4px;cursor:default">
+              <svg width="14" height="10"><line x1="0" y1="5" x2="14" y2="5" stroke="rgba(0,229,255,0.7)" stroke-width="1.5" stroke-dasharray="4,2"/></svg>
+              Retire ⓘ
+            </span>
+            <span title="Financial independence — net worth reaches your FI number (annual spend × FI multiple). You could live off investments indefinitely." style="display:flex;align-items:center;gap:4px;cursor:default">
+              <svg width="10" height="10"><circle cx="5" cy="5" r="4.5" fill="#BF5FFF"/></svg>
+              FI reached ⓘ
+            </span>
+            <span title="Net worth hits $1M" style="display:flex;align-items:center;gap:4px;cursor:default">
+              <svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="var(--neon-amber)"/></svg>
+              $1M ⓘ
+            </span>
+            <span style="display:flex;align-items:center;gap:4px">
+              <svg width="14" height="10"><line x1="0" y1="5" x2="14" y2="5" stroke="rgba(255,80,80,0.7)" stroke-width="1.5" stroke-dasharray="4,3"/></svg>
+              Expenditure
+            </span>
           </div>
         </div>
         <div class="fin-panel-body" id="plan-chart-wrap" style="padding:10px 14px"></div>
       </div>
 
-      <div id="plan-milestones" style="margin-bottom:16px"></div>
+      <div id="plan-milestones" style="margin-bottom:14px"></div>
 
-      <div id="plan-glide" style="margin-bottom:16px"></div>
+      <div id="plan-glide" style="margin-bottom:14px"></div>
 
       <div class="fin-panel">
         <div class="fin-panel-header">
@@ -1901,44 +1986,32 @@ async function _renderFinPlanning(c) {
       </div>
     </div>`;
 
-  // Safe / Aggressive mode toggle
-  c.querySelectorAll('.plan-mode-btn').forEach(btn => {
+  // Risk preset buttons
+  c.querySelectorAll('.fin-plan-preset-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const mode = btn.dataset.mode;
-      if (mode === _finPlanState.planMode) return;
-      // Snapshot current DOM inputs into state before re-render
+      const newPreset = btn.dataset.preset;
+      if (newPreset === _finPlanState.riskPreset) return;
       const inp = _readPlanInputs(c);
       Object.assign(_finPlanState, {
-        salaryIncome: inp.salary, otherIncome: inp.otherIncome,
-        monthlySpend: inp.spend,  returnRate: inp.ret, inflationRate: inp.inf,
-        investmentFrac: Math.round(inp.invFrac * 100), yearsForward: inp.years,
-        annualRaiseRate: inp.raiseRate, salaryCap: inp.salaryCap, savingsOfRaise: inp.raiseSaved,
-        targetRetireAge: inp.targetRetireAge,
-        planMode: mode,
+        monthlySpend: inp.spend, returnRate: inp.ret, inflationRate: inp.inf,
+        investmentFrac: inp.invFrac, yearsForward: inp.years,
+        annualRaiseRate: inp.raiseRate, salaryCap: inp.salaryCap,
+        savingsOfRaise: inp.raiseSaved, targetRetireAge: inp.targetRetireAge,
+        riskPreset: newPreset,
       });
-      try { await apiFetch('PATCH', '/finance/planning/assumptions', { plan_mode: mode }); }
+      try { await apiFetch('PATCH', '/finance/planning/assumptions', { plan_mode: newPreset }); }
       catch(e) { /* non-critical */ }
       _setFinView('planning');
     });
   });
 
-  // Save persistent settings
-  c.querySelector('#plan-save-btn').addEventListener('click', async () => {
-    const inp = _readPlanInputs(c);
-    try {
-      await apiFetch('PATCH', '/finance/planning/assumptions', {
-        return_rate: inp.ret, inflation_rate: inp.inf,
-        target_retire_age: inp.targetRetireAge,
-      });
-      Object.assign(_finPlanState, { returnRate: inp.ret, inflationRate: inp.inf, targetRetireAge: inp.targetRetireAge });
-    } catch(e) { alert('Error: ' + e.message); }
-  });
-
-  // Live-update on any input change
-  ['plan-salary','plan-other-income','plan-spend','plan-return','plan-inflation',
-   'plan-inv-frac','plan-years','plan-raise-rate','plan-salary-cap','plan-raise-saved',
-   'plan-retire-age'].forEach(id => {
-    c.querySelector('#' + id)?.addEventListener('input', () => _redrawProjection(c));
+  // Auto-save + live-update on any input change
+  ['plan-spend','plan-return','plan-inflation','plan-inv-frac','plan-years',
+   'plan-raise-rate','plan-salary-cap','plan-raise-saved','plan-retire-age'].forEach(id => {
+    c.querySelector('#' + id)?.addEventListener('input', () => {
+      _redrawProjection(c);
+      _debouncedPlanSave(c);
+    });
   });
 
   c.querySelector('#plan-exp-add').addEventListener('click', () =>
@@ -1950,7 +2023,11 @@ async function _renderFinPlanning(c) {
 
 function _calcAge(birthDate) {
   if (!birthDate) return null;
-  const bd = new Date(birthDate + 'T00:00:00');
+  // Normalise MM/DD/YYYY → YYYY-MM-DD so the T suffix parses correctly
+  const iso = /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(birthDate)
+    ? birthDate.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, '$3-$1-$2')
+    : birthDate;
+  const bd = new Date(iso + 'T00:00:00');
   if (isNaN(bd.getTime())) return null;
   const today = new Date();
   let age = today.getFullYear() - bd.getFullYear();
@@ -1959,142 +2036,280 @@ function _calcAge(birthDate) {
   return age >= 0 ? age : null;
 }
 
-function _calcGlide(age, mode) {
-  const stocksPct = mode === 'aggressive'
-    ? Math.max(0.40, Math.min(0.95, (110 - age) / 100))
-    : Math.max(0.30, Math.min(0.90, (100 - age) / 100));
-  const bondsPct    = 1 - stocksPct;
-  const stockReturn = mode === 'aggressive' ? 0.09 : 0.07;
-  const bondReturn  = mode === 'aggressive' ? 0.04 : 0.035;
-  return { stocksPct, bondsPct, annualReturn: stocksPct * stockReturn + bondsPct * bondReturn };
+function _fitIncomeTrend(byMonth) {
+  // byMonth is [{bucket, total}] newest-first; returns {slope, annualRate, projectedCurrent, points}
+  // points is [{t, value, trend}] oldest-first; trend is 6-month trailing MA to match backend
+  if (!byMonth || byMonth.length === 0) {
+    return { slope: 0, annualRate: 0, projectedCurrent: 0, points: [] };
+  }
+  const ordered = [...byMonth].reverse();  // oldest-first
+  const n = ordered.length;
+
+  // 6-month trailing MA at each position
+  const points = ordered.map((m, i) => {
+    const win = ordered.slice(Math.max(0, i - 5), i + 1);
+    const trend = win.reduce((s, w) => s + w.total, 0) / win.length;
+    return { t: i, value: m.total, trend };
+  });
+
+  // projectedCurrent = avg of last 6 months (matches backend anchor logic)
+  const recent = ordered.slice(Math.max(0, n - 6));
+  const prior  = ordered.slice(Math.max(0, n - 12), Math.max(0, n - 6));
+  const recentAvg = recent.length ? recent.reduce((s, m) => s + m.total, 0) / recent.length : 0;
+  const priorAvg  = prior.length  ? prior.reduce((s, m) => s + m.total, 0)  / prior.length  : 0;
+  const annualRate = (priorAvg > 0 && recentAvg > 0)
+    ? (((recentAvg / priorAvg) ** 2) - 1) * 100 : 0;
+
+  return { slope: 0, annualRate, projectedCurrent: recentAvg, points };
+}
+
+function _renderIncomeSpark(byMonth, trendResult) {
+  if (!byMonth || byMonth.length < 2) return '';
+  const pts = trendResult.points;
+  if (!pts || !pts.length) return '';
+  const W = 120, H = 40, BAR_GAP = 1;
+  const n = pts.length;
+  const recentStart = Math.max(0, n - 6);  // bars contributing to the MA estimate
+  const maxVal = Math.max(...pts.map(p => Math.max(p.value, p.trend)), 1);
+  const barW = Math.max(1, (W - BAR_GAP * (n - 1)) / n);
+  const yFor = v => H - Math.max(2, Math.round((v / maxVal) * (H - 4))) - 2;
+  const bars = pts.map((p, i) => {
+    const x = (i * (barW + BAR_GAP)).toFixed(1);
+    const h = Math.max(2, Math.round((p.value / maxVal) * (H - 4)));
+    const fill = i >= recentStart ? 'rgba(0,255,136,0.50)' : 'rgba(0,255,136,0.20)';
+    return `<rect x="${x}" y="${(H - h - 2).toFixed(1)}" width="${barW.toFixed(1)}" height="${h}" rx="1" fill="${fill}"/>`;
+  }).join('');
+  // Only draw the MA line where the window is full (i >= 5) so the ramp-up isn't misleading
+  const maPath = pts.filter((_, i) => i >= Math.min(5, n - 1)).map((p, j, arr) => {
+    const i = pts.indexOf(p);
+    const x = (i * (barW + BAR_GAP) + barW / 2).toFixed(1);
+    const y = yFor(p.trend).toFixed(1);
+    return `${j === 0 ? 'M' : 'L'}${x},${y}`;
+  }).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px;display:block;flex-shrink:0">
+    ${bars}
+    ${maPath ? `<path d="${maPath}" fill="none" stroke="var(--neon-cyan)" stroke-width="1.5" stroke-linejoin="round"/>` : ''}
+  </svg>`;
+}
+
+// stockReturn = user's market return assumption (from plan-return field, default 7%).
+// Bond return = stockReturn * 0.5 — a stable rule of thumb (bonds earn ~half the equity risk premium).
+// Presets change ONLY allocation formula — they represent risk tolerance, not market outlook.
+function _calcGlide(age, preset, stockReturn = 0.07) {
+  let stocksPct;
+  if (preset === 'optimistic') {
+    stocksPct = Math.max(0.40, Math.min(0.95, (110 - age) / 100));
+  } else if (preset === 'conservative') {
+    stocksPct = Math.max(0.20, Math.min(0.70, (90 - age) / 100));
+  } else {
+    stocksPct = Math.max(0.30, Math.min(0.85, (100 - age) / 100));
+  }
+  const bondReturn = stockReturn * 0.5;
+  const bondsPct = 1 - stocksPct;
+  return { stocksPct, bondsPct, stockReturn, bondReturn, annualReturn: stocksPct * stockReturn + bondsPct * bondReturn };
 }
 
 function _readPlanInputs(c) {
-  const salary      = parseFloat(c.querySelector('#plan-salary')?.value)       || 0;
-  const otherIncome = parseFloat(c.querySelector('#plan-other-income')?.value) || 0;
-  const spend       = parseFloat(c.querySelector('#plan-spend')?.value)        || 0;
-  const ret         = parseFloat(c.querySelector('#plan-return')?.value)       || 7;
-  const inf         = parseFloat(c.querySelector('#plan-inflation')?.value)    || 2.5;
-  const invFrac     = (parseFloat(c.querySelector('#plan-inv-frac')?.value)    || 0) / 100;
-  const years       = Math.min(60, Math.max(1, parseInt(c.querySelector('#plan-years')?.value) || 30));
-  const raiseRate   = Math.max(0, parseFloat(c.querySelector('#plan-raise-rate')?.value)  || 0);
-  const salaryCap   = Math.max(0, parseFloat(c.querySelector('#plan-salary-cap')?.value)  || 0);
-  const raiseSaved  = Math.max(0, Math.min(100, parseFloat(c.querySelector('#plan-raise-saved')?.value) ?? 50));
-  const birthDate   = _finPlanState.birthDate || '';
+  const spend           = parseFloat(c.querySelector('#plan-spend')?.value)       || 0;
+  const ret             = parseFloat(c.querySelector('#plan-return')?.value)      || 7;
+  const inf             = parseFloat(c.querySelector('#plan-inflation')?.value)   || 2.5;
+  const invFrac         = parseFloat(c.querySelector('#plan-inv-frac')?.value)    ?? (_finPlanState.investmentFrac || 0);
+  const years           = Math.min(60, Math.max(1, parseInt(c.querySelector('#plan-years')?.value) || 30));
+  const raiseRate       = Math.max(0, parseFloat(c.querySelector('#plan-raise-rate')?.value)  || 0);
+  const salaryCap       = Math.max(0, parseFloat(c.querySelector('#plan-salary-cap')?.value)  || 0);
+  const raiseSaved      = Math.max(0, Math.min(100, parseFloat(c.querySelector('#plan-raise-saved')?.value) ?? 50));
+  const birthDate       = _finPlanState.birthDate || '';
   const targetRetireAge = Math.max(40, Math.min(85, parseInt(c.querySelector('#plan-retire-age')?.value) || 62));
-  const planMode    = _finPlanState.planMode || 'safe';
-  const currentAge  = _calcAge(birthDate);
-  return { salary, otherIncome, totalIncome: salary + otherIncome, spend, ret, inf, invFrac, years, raiseRate, salaryCap, raiseSaved, birthDate, targetRetireAge, planMode, currentAge };
+  const riskPreset      = _finPlanState.riskPreset || 'balanced';
+  const currentAge      = _calcAge(birthDate);
+  const monthlyIncome   = _finPlanState.monthlyIncome || 0;
+  return { monthlyIncome, spend, ret, inf, invFrac, years, raiseRate, salaryCap, raiseSaved, birthDate, targetRetireAge, riskPreset, currentAge };
 }
 
 function _redrawProjection(c) {
   const inp = _readPlanInputs(c);
-  const { salary, otherIncome, totalIncome, spend, ret, inf, invFrac, years, raiseRate, salaryCap, raiseSaved, planMode, currentAge, targetRetireAge } = inp;
+  const { monthlyIncome, spend, ret, inf, invFrac, years, raiseRate, salaryCap, raiseSaved, riskPreset, currentAge, targetRetireAge } = inp;
   Object.assign(_finPlanState, { annualRaiseRate: raiseRate, salaryCap, savingsOfRaise: raiseSaved });
-  const nw   = _finPlanState.netWorth || 0;
-  const exps = _finPlanState.expenditures || [];
+  const nw             = _finPlanState.netWorth || 0;
+  const investmentFrac = invFrac / 100;
+  const exps           = _finPlanState.expenditures || [];
+  const plannedRetireYear = currentAge !== null && targetRetireAge
+    ? Math.max(0, targetRetireAge - currentAge) : null;
+  const effectiveYears = years;
 
   const result = _projectNetWorth({
-    netWorth: nw, investmentFrac: invFrac,
-    salaryIncome: salary, otherIncome,
-    monthlySpend: spend, returnRate: ret,
-    planMode, currentAge, expenditures: exps, yearsForward: years,
+    netWorth: nw, investmentFrac,
+    monthlyIncome, monthlySpend: spend, returnRate: ret, inflationRate: inf,
+    riskPreset, currentAge, targetRetireAge, expenditures: exps, yearsForward: effectiveYears,
     annualRaiseRate: raiseRate, salaryCap, savingsOfRaise: raiseSaved,
+    cashBalance:         _finPlanState.cashBalance         || 0,
+    investmentsBalance:  _finPlanState.investmentsBalance  || 0,
+    minCashBalance:      _finPlanState.minCashBalance       || 0,
   });
 
   const chartWrap = c.querySelector('#plan-chart-wrap');
-  if (chartWrap) chartWrap.innerHTML = _renderProjectionSVG({ ...result, expenditures: exps, yearsForward: years, annualRaiseRate: raiseRate });
+  if (chartWrap) chartWrap.innerHTML = _renderProjectionSVG({ ...result, plannedRetireYear, expenditures: exps, yearsForward: effectiveYears });
 
   const milestonesEl = c.querySelector('#plan-milestones');
-  if (milestonesEl) milestonesEl.innerHTML = _planMilestonesHTML(result, { nw, monthlySpend: spend, yearsForward: years, annualRaiseRate: raiseRate, planMode });
+  if (milestonesEl) milestonesEl.innerHTML = _planMilestonesHTML(result, { nw, monthlySpend: spend, yearsForward: years, annualRaiseRate: raiseRate, riskPreset });
 
   const kpisEl = c.querySelector('#plan-kpis');
   if (kpisEl) kpisEl.innerHTML = _renderKPICards({
-    totalIncome, spend,
+    totalIncome: monthlyIncome, spend,
     netWorth: nw,
     cashBalance:         _finPlanState.cashBalance         || 0,
     investmentsBalance:  _finPlanState.investmentsBalance  || 0,
-    monthlyDebtPayments: _finPlanState.monthlyDebtPayments || 0,
     fireNumber: result.fireNumber,
-    retireYear: result.retireYear, retireYearStep: result.retireYearStep,
-    currentAge, targetRetireAge, planMode,
+    retireYear: result.retireYear, crossoverYear: result.crossoverYear,
+    nwAtRetireYear: result.nwAtRetireYear,
+    currentAge, targetRetireAge, riskPreset,
   });
 
   const glideEl = c.querySelector('#plan-glide');
-  if (glideEl) glideEl.innerHTML = _renderGlideTable(currentAge, targetRetireAge, planMode, years);
+  if (glideEl) glideEl.innerHTML = _renderGlideTable(currentAge, targetRetireAge, riskPreset, years, ret / 100);
 }
 
-function _projectNetWorth({ netWorth, investmentFrac, salaryIncome = 0, otherIncome = 0, monthlySpend, returnRate, planMode = 'safe', currentAge = null, expenditures, yearsForward, annualRaiseRate = 0, salaryCap = 0, savingsOfRaise = 50 }) {
-  const fireMultiple   = planMode === 'aggressive' ? 25 : 28.57;
-  const fireNumber     = monthlySpend * 12 * fireMultiple;
-  const monthlyIncome  = salaryIncome + otherIncome;
-  const today          = new Date();
+function _projectNetWorth({ netWorth, investmentFrac, monthlyIncome = 0, monthlySpend, returnRate,
+                            riskPreset = 'balanced', currentAge = null, targetRetireAge = null,
+                            expenditures = [], yearsForward, annualRaiseRate = 0, salaryCap = 0,
+                            savingsOfRaise = 50, inflationRate = 2.5,
+                            cashBalance = 0, investmentsBalance = 0, minCashBalance = 0 }) {
+  const fireMultiple = riskPreset === 'conservative' ? 30 : riskPreset === 'optimistic' ? 25 : 28.57;
+  const fireNumber   = monthlySpend * 12 * fireMultiple;
+  const today        = new Date();
 
-  // Return rate per month: use glide path if age known, else fixed returnRate
   const getMonthlyReturn = (yearN) => {
     if (currentAge !== null) {
-      const { annualReturn } = _calcGlide(currentAge + yearN, planMode);
+      const { annualReturn } = _calcGlide(currentAge + yearN, riskPreset, returnRate / 100);
       return annualReturn / 12;
     }
     return (returnRate / 100) / 12;
   };
-  let currentMR = getMonthlyReturn(0);
 
-  let nw = netWorth, nwFlat = netWorth, nwStep = netWorth;
-  let stepSalary  = salaryIncome;
-  let stepSavings = monthlyIncome - monthlySpend;
+  // Split NW into tracked liquid components + static illiquid (home equity, etc.)
+  // Use actual balances when available so drawdown logic is accurate.
+  const hasBalances = cashBalance + investmentsBalance > 0;
+  let investNW  = hasBalances ? investmentsBalance       : netWorth * investmentFrac;
+  let cashNW    = hasBalances ? cashBalance               : netWorth * (1 - investmentFrac);
+  const otherNW = netWorth - investNW - cashNW;  // illiquid — static, no return in this model
 
-  const points = [{ year: 0, nw: Math.round(nw), nwFlat: Math.round(nwFlat), nwStep: Math.round(nwStep) }];
-  let retireYear = null, retireYearStep = null;
-  let millionYear = null, millionYearStep = null;
+  let currentSalary  = monthlyIncome;
+  let currentSpend   = monthlySpend;
+  let currentSavings = monthlyIncome - monthlySpend;
+  let cumulContribs  = 0;
+  let cumulGains     = 0;
+
+  const snapNW = () => Math.round(investNW + cashNW + otherNW);
+  const points = [{ year: 0, nw: Math.round(netWorth), contributions: 0, gains: 0 }];
+  let retireYear = null, millionYear = null, crossoverYear = null, nwAtRetireYear = null;
+
+  const plannedRetireYear = (currentAge !== null && targetRetireAge !== null)
+    ? Math.max(0, targetRetireAge - currentAge)
+    : null;
 
   for (let month = 1; month <= yearsForward * 12; month++) {
-    // Update blended return at start of each new year
-    if (month % 12 === 1) currentMR = getMonthlyReturn(Math.ceil(month / 12));
-    const curDate = new Date(today.getFullYear(), today.getMonth() + month, 1);
-    const isoMonth = `${curDate.getFullYear()}-${String(curDate.getMonth()+1).padStart(2,'0')}`;
+    const yearN     = Math.ceil(month / 12);
+    const isRetired = plannedRetireYear !== null && (month / 12) >= plannedRetireYear;
+    const mr        = getMonthlyReturn(yearN);
 
-    const net = monthlyIncome - monthlySpend;
-    nw     += net;
-    nwFlat += net;
-    nwStep += stepSavings;
-
-    // Investment compound growth (glide-path-adjusted when birth date is set)
-    nw     += nw     * investmentFrac * currentMR;
-    nwStep += nwStep * investmentFrac * currentMR;
-
-    // One-time expenditures
-    for (const exp of expenditures) {
-      if (exp.expected_date && exp.expected_date.startsWith(isoMonth)) {
-        nw     -= exp.amount;
-        nwFlat -= exp.amount;
-        nwStep -= exp.amount;
-      }
+    // Inflate spending once per year
+    if (month % 12 === 1 && month > 1) {
+      currentSpend *= (1 + inflationRate / 100);
+      if (!isRetired) currentSavings = currentSalary - currentSpend;
     }
 
-    // Annual step-up: grow salary by raise%, stop when salary cap is reached
-    if (month % 12 === 0 && annualRaiseRate > 0) {
-      const capHit = salaryCap > 0 && stepSalary >= salaryCap;
+    // Annual raise step-up (pre-retirement only)
+    if (month % 12 === 0 && annualRaiseRate > 0 && !isRetired) {
+      const capHit = salaryCap > 0 && currentSalary >= salaryCap;
       if (!capHit) {
-        const prevSalary = stepSalary;
-        const raised     = stepSalary * (annualRaiseRate / 100);
-        stepSalary       = salaryCap > 0 ? Math.min(stepSalary + raised, salaryCap) : stepSalary + raised;
-        const actualRaise = stepSalary - prevSalary;
-        stepSavings      += actualRaise * (savingsOfRaise / 100);
+        const prev    = currentSalary;
+        currentSalary = salaryCap > 0
+          ? Math.min(currentSalary * (1 + annualRaiseRate / 100), salaryCap)
+          : currentSalary * (1 + annualRaiseRate / 100);
+        currentSavings += (currentSalary - prev) * (savingsOfRaise / 100);
       }
     }
 
-    if (month % 12 === 0) {
-      const year = month / 12;
-      if (fireNumber > 0 && retireYear === null     && nw     >= fireNumber) retireYear     = year;
-      if (fireNumber > 0 && retireYearStep === null && nwStep >= fireNumber) retireYearStep = year;
-      if (millionYear     === null && nw     >= 1_000_000) millionYear     = year;
-      if (millionYearStep === null && nwStep >= 1_000_000) millionYearStep = year;
-      points.push({ year, nw: Math.round(nw), nwFlat: Math.round(nwFlat), nwStep: Math.round(nwStep) });
+    // Net flow: pre-retirement = income − spend; post-retirement = −spend (pure drawdown)
+    const netFlow      = isRetired ? -currentSpend : currentSavings;
+    const monthContrib = Math.max(0, netFlow);
+    cumulContribs     += monthContrib;
+
+    // Route savings by investmentFrac; drawdowns use available cash first (above minCash buffer)
+    if (netFlow >= 0) {
+      investNW += netFlow * investmentFrac;
+      cashNW   += netFlow * (1 - investmentFrac);
+    } else {
+      const need       = -netFlow;
+      const availCash  = Math.max(0, cashNW - minCashBalance);
+      const fromCash   = Math.min(availCash, need);
+      cashNW   -= fromCash;
+      investNW -= (need - fromCash);
     }
+
+    // Investment growth on invested portion only
+    const investGrowth = Math.max(0, investNW) * mr;
+    cumulGains        += investGrowth;
+    investNW          += investGrowth;
+
+    // Expenditures — one-time and recurring
+    const curDate  = new Date(today.getFullYear(), today.getMonth() + month, 1);
+    const isoMonth = `${curDate.getFullYear()}-${String(curDate.getMonth() + 1).padStart(2, '0')}`;
+    for (const exp of expenditures) {
+      let applies = false;
+      if (exp.is_recurring && exp.recurrence_months > 0 && exp.expected_date) {
+        const startDate = new Date(exp.expected_date + 'T00:00:00');
+        const endDate   = exp.recurrence_end_date ? new Date(exp.recurrence_end_date + 'T00:00:00') : null;
+        if (curDate >= startDate && (!endDate || curDate <= endDate)) {
+          const monthsDiff = (curDate.getFullYear() - startDate.getFullYear()) * 12
+                           + (curDate.getMonth() - startDate.getMonth());
+          applies = monthsDiff >= 0 && monthsDiff % exp.recurrence_months === 0;
+        }
+      } else {
+        applies = !!(exp.expected_date && exp.expected_date.startsWith(isoMonth));
+      }
+      if (applies) {
+        const availCash  = Math.max(0, cashNW - minCashBalance);
+        const fromCash   = Math.min(availCash, exp.amount);
+        const fromInvest = exp.amount - fromCash;
+        cashNW   -= fromCash;
+        investNW -= fromInvest;
+      }
+    }
+
+    // Rebalance to target investmentFrac — assumes user keeps allocation constant
+    const liquidNW    = investNW + cashNW;
+    const aboveFloor  = Math.max(0, liquidNW - minCashBalance);
+    investNW = aboveFloor * investmentFrac;
+    cashNW   = liquidNW - investNW;
+
+    // Crossover: monthly investment return ≥ monthly income (pre-retirement only)
+    if (!isRetired && crossoverYear === null && currentSalary > 0 && investGrowth >= currentSalary) {
+      crossoverYear = month / 12;
+    }
+
+    const year  = month / 12;
+    const nwNow = snapNW();
+    if (nwAtRetireYear === null && isRetired) {
+      nwAtRetireYear = nwNow;
+    }
+    if (fireNumber > 0 && retireYear  === null && nwNow >= fireNumber)  retireYear  = year;
+    if (millionYear === null && nwNow >= 1_000_000) millionYear = year;
+    const contribsForPoint = Math.round(Math.max(0, Math.min(cumulContribs, nwNow)));
+    points.push({ year, nw: nwNow, contributions: contribsForPoint, gains: Math.round(cumulGains) });
   }
 
-  return { points, retireYear, millionYear, retireYearStep, millionYearStep, fireNumber };
+  return { points, retireYear, millionYear, crossoverYear, fireNumber, nwAtRetireYear };
+}
+
+function _normDateISO(str) {
+  if (!str) return '';
+  const s = String(str).trim();
+  // Already YYYY-MM-DD (possibly with time suffix — strip time)
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  // Delegate all other formats (MM/DD/YYYY, MM/DD, m/d, relative, etc.) to the shared parser
+  return parseSmartDate(s) || '';
 }
 
 function _planNiceNum(range) {
@@ -2113,23 +2328,18 @@ function _fmtPlanAxis(v) {
   return `${sign}$${Math.round(abs)}`;
 }
 
-function _renderProjectionSVG({ points, retireYear, millionYear, retireYearStep, millionYearStep, expenditures, yearsForward, annualRaiseRate = 0 }) {
+function _renderProjectionSVG({ points, retireYear, millionYear, crossoverYear, fireNumber, plannedRetireYear, expenditures, yearsForward }) {
   if (!points || points.length < 2) {
     return `<div class="di-empty">Set income and return rate to see your projection.</div>`;
   }
 
-  const hasStepUp = annualRaiseRate > 0;
   const W = 680, H = 300, PAD_L = 66, PAD_R = 16, PAD_T = 36, PAD_B = 32;
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
 
-  const allNW  = hasStepUp
-    ? points.flatMap(p => [p.nw, p.nwFlat, p.nwStep])
-    : points.flatMap(p => [p.nw, p.nwFlat]);
+  const allNW  = points.map(p => p.nw);
   const rawMin = Math.min(0, ...allNW);
   const rawMax = Math.max(...allNW, 1000);
-
-  // Target ~5 evenly-spaced nice ticks
   const rawRange = rawMax - rawMin;
   const tickInt  = _planNiceNum(rawRange / 5);
   const niceMin  = Math.floor(rawMin / tickInt) * tickInt;
@@ -2138,163 +2348,155 @@ function _renderProjectionSVG({ points, retireYear, millionYear, retireYearStep,
 
   const xFor = yr => PAD_L + (yr / yearsForward) * innerW;
   const yFor = v  => PAD_T + innerH * (1 - (v - niceMin) / span);
+  const baselineY = yFor(Math.max(niceMin, 0)).toFixed(1);
 
-  // Grid lines + Y-axis labels
   const grid = [];
   for (let v = niceMin; v <= niceMax + tickInt * 0.01; v += tickInt) {
     const y = yFor(v).toFixed(1);
-    grid.push(`<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`);
-    grid.push(`<text x="${PAD_L - 5}" y="${parseFloat(y) + 4}" text-anchor="end" fill="rgba(255,255,255,0.40)" font-size="10.5">${_fmtPlanAxis(v)}</text>`);
+    grid.push(`<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`);
+    grid.push(`<text x="${PAD_L - 5}" y="${parseFloat(y) + 4}" text-anchor="end" fill="rgba(255,255,255,0.38)" font-size="10.5">${_fmtPlanAxis(v)}</text>`);
   }
-  // Zero baseline (slightly brighter)
-  const y0 = yFor(0).toFixed(1);
   if (rawMin < 0) {
-    grid.push(`<line x1="${PAD_L}" y1="${y0}" x2="${W - PAD_R}" y2="${y0}" stroke="rgba(255,255,255,0.22)" stroke-width="1"/>`);
+    grid.push(`<line x1="${PAD_L}" y1="${baselineY}" x2="${W - PAD_R}" y2="${baselineY}" stroke="rgba(255,255,255,0.22)" stroke-width="1"/>`);
   }
 
-  // Expenditure vertical markers (rendered after lines so they appear on top)
-  const today = new Date();
-  const expMarkers = (expenditures || []).filter(e => e.expected_date).map((e, idx) => {
-    const d = new Date(e.expected_date + 'T00:00:00');
-    const yrFrac = (d.getFullYear() - today.getFullYear()) + (d.getMonth() - today.getMonth()) / 12;
-    if (yrFrac < 0 || yrFrac > yearsForward) return '';
-    const x     = parseFloat(xFor(yrFrac).toFixed(1));
-    const anchor = x > W * 0.72 ? 'end' : 'start';
-    const lx    = anchor === 'start' ? x + 4 : x - 4;
-    const ly    = PAD_T + 12 + (idx % 3) * 13;
-    const label = escHtml(`${e.name}: ${_fmtMoneyCompact(e.amount)}`);
-    return `
-      <line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H - PAD_B}" stroke="rgba(255,80,80,0.55)" stroke-width="1.5" stroke-dasharray="4,3"/>
-      <rect x="${anchor === 'start' ? lx - 2 : lx - label.length * 5.4}" y="${ly - 10}" width="${label.length * 5.4 + 4}" height="13" rx="2" fill="rgba(0,0,0,0.55)"/>
-      <text x="${lx}" y="${ly}" text-anchor="${anchor}" fill="rgba(255,100,100,0.95)" font-size="10" font-weight="600">${label}</text>`;
-  }).join('');
+  // Stacked area paths
+  const contribAreaD = points.map((p, i) => {
+    const x = xFor(p.year).toFixed(1);
+    const y = yFor(Math.max(niceMin, p.contributions)).toFixed(1);
+    return `${i === 0 ? 'M' : 'L'}${x},${y}`;
+  }).join(' ') +
+    ` L${xFor(points[points.length - 1].year).toFixed(1)},${baselineY}` +
+    ` L${xFor(points[0].year).toFixed(1)},${baselineY} Z`;
 
-  // Path builder
-  const toPath = (pts, key) =>
-    pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(p.year).toFixed(1)},${yFor(p[key]).toFixed(1)}`).join(' ');
+  const gainsAreaD = points.map((p, i) => {
+    const x = xFor(p.year).toFixed(1);
+    const y = yFor(Math.max(niceMin, p.nw)).toFixed(1);
+    return `${i === 0 ? 'M' : 'L'}${x},${y}`;
+  }).join(' ') +
+    points.slice().reverse().map(p => {
+      const x = xFor(p.year).toFixed(1);
+      const y = yFor(Math.max(niceMin, p.contributions)).toFixed(1);
+      return `L${x},${y}`;
+    }).join(' ') + ' Z';
 
-  // Gradient fill under the top line (step-up when enabled, else growth)
-  const topKey    = hasStepUp ? 'nwStep' : 'nw';
-  const topColor  = hasStepUp ? '#00FF88' : '#00E5FF';
-  const topD      = toPath(points, topKey);
-  const firstPt   = points[0];
-  const lastPt    = points[points.length - 1];
-  const baselineY = yFor(Math.max(niceMin, 0)).toFixed(1);
-  const fillD     = `${topD} L${xFor(lastPt.year).toFixed(1)},${baselineY} L${xFor(firstPt.year).toFixed(1)},${baselineY} Z`;
+  const nwLinePath = points.map((p, i) =>
+    `${i === 0 ? 'M' : 'L'}${xFor(p.year).toFixed(1)},${yFor(p.nw).toFixed(1)}`).join(' ');
 
   const defs = `<defs>
-    <linearGradient id="planFill" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="${topColor}" stop-opacity="0.18"/>
-      <stop offset="100%" stop-color="${topColor}" stop-opacity="0"/>
+    <linearGradient id="planContribFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#00E5FF" stop-opacity="0.50"/>
+      <stop offset="100%" stop-color="#00E5FF" stop-opacity="0.12"/>
+    </linearGradient>
+    <linearGradient id="planGainsFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#00FF88" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#00FF88" stop-opacity="0.10"/>
     </linearGradient>
   </defs>`;
 
-  const growthFill = `<path d="${fillD}" fill="url(#planFill)"/>`;
-  const flatLine   = `<path d="${toPath(points,'nwFlat')}" fill="none" stroke="rgba(255,184,0,0.55)" stroke-width="1.4" stroke-dasharray="3,4"/>`;
-  const growthLine = `<path d="${toPath(points,'nw')}" fill="none" stroke="#00E5FF" stroke-width="${hasStepUp ? 1.8 : 2.5}" stroke-dasharray="${hasStepUp ? '5,4' : 'none'}" stroke-linejoin="round" opacity="${hasStepUp ? 0.7 : 1}"/>`;
-  const stepLine   = hasStepUp
-    ? `<path d="${topD}" fill="none" stroke="#00FF88" stroke-width="2.5" stroke-linejoin="round"/>`
-    : '';
+  const contribArea = `<path d="${contribAreaD}" fill="url(#planContribFill)"/>`;
+  const gainsArea   = `<path d="${gainsAreaD}"   fill="url(#planGainsFill)"/>`;
+  const nwLine      = `<path d="${nwLinePath}" fill="none" stroke="rgba(255,255,255,0.80)" stroke-width="1.5" stroke-linejoin="round"/>`;
 
-  // FIRE retirement milestone — two markers when step-up differs
-  let retireMarker = '';
+  // Crossover year marker — event occurred within yearN, best estimate is mid-segment
+  const today = new Date();
+  let crossoverMarker = '';
+  if (crossoverYear && crossoverYear <= yearsForward) {
+    const cx = xFor(crossoverYear).toFixed(1);
+    crossoverMarker = `<line x1="${cx}" y1="${PAD_T}" x2="${cx}" y2="${H - PAD_B}" stroke="rgba(0,255,136,0.45)" stroke-width="1" stroke-dasharray="3,3"/>`;
+  }
+
+  // Planned retirement marker
+  let planRetireMarker = '';
+  if (plannedRetireYear !== null && plannedRetireYear <= yearsForward) {
+    const rx = xFor(plannedRetireYear).toFixed(1);
+    planRetireMarker = `<line x1="${rx}" y1="${PAD_T}" x2="${rx}" y2="${H - PAD_B}" stroke="rgba(0,229,255,0.55)" stroke-width="1.5" stroke-dasharray="5,3"/>`;
+  }
+
+  // FI marker — interpolate exact x where NW crosses fireNumber; y pinned to fireNumber level
+  let fireMarker = '';
   if (retireYear && retireYear <= yearsForward) {
-    const rx    = xFor(retireYear).toFixed(1);
-    const rpt   = points.find(p => p.year >= retireYear);
-    const ry    = rpt ? yFor(rpt.nw).toFixed(1) : y0;
-    const anchor = parseFloat(rx) > W * 0.75 ? 'end' : parseFloat(rx) < W * 0.2 ? 'start' : 'middle';
-    retireMarker = `
-      <line x1="${rx}" y1="${PAD_T}" x2="${rx}" y2="${H - PAD_B}" stroke="rgba(191,95,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
-      <circle cx="${rx}" cy="${ry}" r="5" fill="#BF5FFF" stroke="rgba(0,0,0,0.5)" stroke-width="1.5"/>
-      <text x="${rx}" y="${PAD_T - 10}" text-anchor="${anchor}" fill="#BF5FFF" font-size="11" font-weight="600">FIRE yr ${retireYear}</text>`;
-  }
-  if (hasStepUp && retireYearStep && retireYearStep <= yearsForward && retireYearStep !== retireYear) {
-    const rx    = xFor(retireYearStep).toFixed(1);
-    const rpt   = points.find(p => p.year >= retireYearStep);
-    const ry    = rpt ? yFor(rpt.nwStep).toFixed(1) : y0;
-    const anchor = parseFloat(rx) > W * 0.75 ? 'end' : parseFloat(rx) < W * 0.2 ? 'start' : 'middle';
-    const labelY = Math.max(parseFloat(ry) - 10, PAD_T + 2);
-    retireMarker += `
-      <circle cx="${rx}" cy="${ry}" r="5" fill="#00FF88" stroke="rgba(0,0,0,0.5)" stroke-width="1.5"/>
-      <text x="${rx}" y="${labelY}" text-anchor="${anchor}" fill="#00FF88" font-size="11" font-weight="600">FIRE yr ${retireYearStep} ↑</text>`;
+    const prevFIPt  = points.find(p => p.year === retireYear - 1) || points[0];
+    const crossFIPt = points.find(p => p.year === retireYear);
+    let fiX;
+    if (crossFIPt && prevFIPt && crossFIPt.nw !== prevFIPt.nw) {
+      const t = (fireNumber - prevFIPt.nw) / (crossFIPt.nw - prevFIPt.nw);
+      fiX = xFor((retireYear - 1) + Math.max(0, Math.min(1, t))).toFixed(1);
+    } else {
+      fiX = xFor(retireYear).toFixed(1);
+    }
+    const fiY = yFor(fireNumber).toFixed(1);
+    fireMarker = `
+      <line x1="${fiX}" y1="${PAD_T}" x2="${fiX}" y2="${H - PAD_B}" stroke="rgba(191,95,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+      <circle cx="${fiX}" cy="${fiY}" r="5" fill="#BF5FFF" stroke="rgba(0,0,0,0.5)" stroke-width="1.5"/>`;
   }
 
-  // $1M milestone
+  // $1M milestone — interpolate exact x crossing; y pinned to threshold level
   let millionMarker = '';
   if (millionYear && millionYear <= yearsForward) {
-    const mx  = xFor(millionYear).toFixed(1);
-    const mpt = points.find(p => p.year >= millionYear);
-    const my  = mpt ? yFor(mpt.nw).toFixed(1) : y0;
-    const labelY = Math.max(parseFloat(my) - 9, PAD_T + 4);
-    millionMarker = `
-      <circle cx="${mx}" cy="${my}" r="4.5" fill="${hasStepUp ? '#00E5FF' : '#00FF88'}" stroke="rgba(0,0,0,0.5)" stroke-width="1.5"/>
-      <text x="${mx}" y="${labelY}" text-anchor="middle" fill="${hasStepUp ? '#00E5FF' : '#00FF88'}" font-size="11" font-weight="600">$1M</text>`;
-  }
-  if (hasStepUp && millionYearStep && millionYearStep <= yearsForward && millionYearStep !== millionYear) {
-    const mx  = xFor(millionYearStep).toFixed(1);
-    const mpt = points.find(p => p.year >= millionYearStep);
-    const my  = mpt ? yFor(mpt.nwStep).toFixed(1) : y0;
-    const labelY = Math.max(parseFloat(my) - 9, PAD_T + 4);
-    millionMarker += `
-      <circle cx="${mx}" cy="${my}" r="4.5" fill="#00FF88" stroke="rgba(0,0,0,0.5)" stroke-width="1.5"/>
-      <text x="${mx}" y="${labelY}" text-anchor="middle" fill="#00FF88" font-size="11" font-weight="600">$1M ↑</text>`;
+    const prevPt = points.find(p => p.year === millionYear - 1) || points[0];
+    const crossPt = points.find(p => p.year === millionYear);
+    let milX;
+    if (crossPt && prevPt && crossPt.nw !== prevPt.nw) {
+      const t = (1_000_000 - prevPt.nw) / (crossPt.nw - prevPt.nw);
+      milX = xFor((millionYear - 1) + Math.max(0, Math.min(1, t))).toFixed(1);
+    } else {
+      milX = xFor(millionYear).toFixed(1);
+    }
+    const milY = yFor(1_000_000).toFixed(1);
+    millionMarker = `<circle cx="${milX}" cy="${milY}" r="4.5" fill="var(--neon-amber)" stroke="rgba(0,0,0,0.5)" stroke-width="1.5"/>`;
   }
 
-  // X-axis year labels (every 5 years)
-  const xStep = yearsForward <= 20 ? 5 : yearsForward <= 40 ? 5 : 10;
+  // Expenditure markers — one-time only; recurring costs are modeled in the curve, not marked
+  const expMarkers = (expenditures || []).filter(e => e.expected_date && !e.is_recurring).map((e, idx) => {
+    const rawDate = _normDateISO(e.expected_date);
+    if (!rawDate) return '';
+    const d = new Date(rawDate + 'T00:00:00');
+    if (isNaN(d.getTime())) return '';
+    const yrFrac = (d.getFullYear() - today.getFullYear()) + (d.getMonth() - today.getMonth()) / 12;
+    if (isNaN(yrFrac) || yrFrac < 0 || yrFrac > yearsForward) return '';
+    const x      = parseFloat(xFor(yrFrac).toFixed(1));
+    const anchor = x > W * 0.72 ? 'end' : 'start';
+    const lx     = anchor === 'start' ? x + 3 : x - 3;
+    const ly     = PAD_T + 10 + (idx % 4) * 11;
+    const rawName = String(e.name || '');
+    const label  = escHtml(rawName.length > 12 ? rawName.slice(0, 11) + '…' : rawName);
+    const labelW = label.length * 5 + 4;
+    return `
+      <line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H - PAD_B}" stroke="rgba(255,80,80,0.50)" stroke-width="1.5" stroke-dasharray="4,3"/>
+      <rect x="${anchor === 'start' ? lx - 2 : lx - labelW}" y="${ly - 8}" width="${labelW}" height="10" rx="2" fill="rgba(0,0,0,0.55)"/>
+      <text x="${lx}" y="${ly}" text-anchor="${anchor}" fill="rgba(255,120,120,0.90)" font-size="9">${label}</text>`;
+  }).join('');
+
+  const xStep = yearsForward <= 15 ? 2 : yearsForward <= 35 ? 5 : 10;
   const xLbls = [];
   for (let yr = 0; yr <= yearsForward; yr += xStep) {
     const x = xFor(yr).toFixed(1);
-    const label = new Date(today.getFullYear() + yr, 0, 1).getFullYear();
-    xLbls.push(`<text x="${x}" y="${H - 10}" text-anchor="middle" fill="rgba(255,255,255,0.40)" font-size="11">${label}</text>`);
+    xLbls.push(`<text x="${x}" y="${H - 10}" text-anchor="middle" fill="rgba(255,255,255,0.38)" font-size="11">${today.getFullYear() + yr}</text>`);
   }
 
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
     ${defs}
     ${grid.join('')}
-    ${growthFill}
-    ${flatLine}${growthLine}${stepLine}
-    ${expMarkers}
-    ${retireMarker}${millionMarker}
+    ${contribArea}${gainsArea}${nwLine}
+    ${expMarkers}${crossoverMarker}${planRetireMarker}${fireMarker}${millionMarker}
     ${xLbls.join('')}
   </svg>`;
 }
 
-function _planMilestonesHTML({ points, retireYear, millionYear, retireYearStep, millionYearStep, fireNumber: fn }, { nw, monthlySpend, yearsForward, annualRaiseRate = 0, planMode = 'safe' }) {
-  const fireMultiple = planMode === 'aggressive' ? 25 : 28.57;
+function _planMilestonesHTML({ points, retireYear, millionYear, crossoverYear, fireNumber: fn }, { nw, monthlySpend, yearsForward, annualRaiseRate = 0, riskPreset = 'balanced' }) {
+  const fireMultiple = riskPreset === 'conservative' ? 30 : riskPreset === 'optimistic' ? 25 : 28.57;
   const fireNumber   = fn || Math.round(monthlySpend * 12 * fireMultiple);
-  const hasStepUp    = annualRaiseRate > 0;
-  const getAt = (yr, key = 'nw') => {
+  const getAt = (yr) => {
     const p = points.find(p => p.year >= yr);
-    return p ? p[key] : (points[points.length - 1]?.[key] || 0);
+    return p ? p.nw : (points[points.length - 1]?.nw || 0);
   };
 
-  const yr5base  = getAt(5, 'nw'), yr5step  = getAt(5,  'nwStep');
-  const yr10base = getAt(10,'nw'), yr10step = getAt(10, 'nwStep');
+  const yr5nw  = getAt(5);
+  const yr10nw = getAt(10);
 
-  const fireSub = (() => {
-    if (!retireYear && !retireYearStep) return 'not in window';
-    if (!hasStepUp || !retireYearStep)  return retireYear ? `reached yr ${retireYear}` : 'not in window';
-    if (retireYearStep === retireYear)  return `reached yr ${retireYear}`;
-    return retireYear
-      ? `yr ${retireYear} → ${retireYearStep} w/ raises`
-      : `yr ${retireYearStep} w/ raises`;
-  })();
-  const fireColor = (retireYear || retireYearStep) ? 'purple' : 'gray';
-
-  const millionSub = (() => {
-    if (!millionYear && !millionYearStep) return `beyond ${yearsForward}yr`;
-    if (!hasStepUp || !millionYearStep)   return millionYear ? 'milestone reached' : `beyond ${yearsForward}yr`;
-    if (millionYearStep === millionYear)  return 'milestone reached';
-    return millionYear
-      ? `yr ${millionYear} → ${millionYearStep} w/ raises`
-      : `yr ${millionYearStep} w/ raises`;
-  })();
-  const millionVal = (() => {
-    if (hasStepUp && millionYearStep) return `Year ${millionYearStep}`;
-    return millionYear ? `Year ${millionYear}` : 'Beyond window';
-  })();
-  const millionColor = (millionYear || millionYearStep) ? 'green' : 'gray';
+  const today = new Date();
+  const crossoverCal = crossoverYear ? today.getFullYear() + Math.round(crossoverYear) : null;
 
   const milestones = [
     { label: 'Today',
@@ -2302,21 +2504,21 @@ function _planMilestonesHTML({ points, retireYear, millionYear, retireYearStep, 
       sub:   'current net worth',
       color: 'blue' },
     { label: 'Year 5',
-      value: hasStepUp ? _fmtMoneyCompact(yr5step) : _fmtMoneyCompact(yr5base),
-      sub:   hasStepUp && yr5step !== yr5base ? `w/ raises (${_fmtMoneyCompact(yr5base)} base)` : 'w/ investment growth',
+      value: _fmtMoneyCompact(yr5nw),
+      sub:   'projected net worth',
       color: 'teal' },
     { label: 'Year 10',
-      value: hasStepUp ? _fmtMoneyCompact(yr10step) : _fmtMoneyCompact(yr10base),
-      sub:   hasStepUp && yr10step !== yr10base ? `w/ raises (${_fmtMoneyCompact(yr10base)} base)` : 'w/ investment growth',
+      value: _fmtMoneyCompact(yr10nw),
+      sub:   'projected net worth',
       color: 'teal' },
-    { label: 'FIRE #',
+    { label: 'FI Number',
       value: _fmtMoneyCompact(fireNumber),
-      sub:   fireSub,
-      color: fireColor },
-    { label: '$1M',
-      value: millionVal,
-      sub:   millionSub,
-      color: millionColor },
+      sub:   retireYear ? `FI reached yr ${Math.round(retireYear)} · ${fireMultiple}× spend` : `${fireMultiple}× annual spend · not in window`,
+      color: retireYear ? 'purple' : 'gray' },
+    { label: 'Compounding',
+      value: crossoverCal ? `${crossoverCal}` : 'Beyond window',
+      sub:   crossoverCal ? `yr ${Math.round(crossoverYear)} — returns exceed income` : 'raise savings or invested %',
+      color: crossoverCal ? 'green' : 'gray' },
   ];
 
   return `<div class="stats-row" style="grid-template-columns:repeat(${milestones.length},1fr)">
@@ -2329,90 +2531,98 @@ function _planMilestonesHTML({ points, retireYear, millionYear, retireYearStep, 
   </div>`;
 }
 
-function _renderKPICards({ totalIncome, spend, netWorth, cashBalance, investmentsBalance, monthlyDebtPayments, fireNumber, retireYear, retireYearStep, currentAge, targetRetireAge, planMode }) {
-  const today = new Date();
+function _renderKPICards({ totalIncome, spend, netWorth, cashBalance, investmentsBalance, fireNumber, retireYear, crossoverYear, nwAtRetireYear, currentAge, targetRetireAge, riskPreset }) {
+  const today       = new Date();
   const savingsRate = totalIncome > 0 ? ((totalIncome - spend) / totalIncome * 100) : 0;
-  const efMonths    = spend > 0 ? cashBalance / spend : 0;
-  const dtiPct      = totalIncome > 0 ? (monthlyDebtPayments / totalIncome * 100) : 0;
   const firePct     = fireNumber > 0 ? Math.min(200, netWorth / fireNumber * 100) : 0;
-  const investYears = spend * 12 > 0 ? investmentsBalance / (spend * 12) : 0;
 
-  const fireRetireYear  = retireYearStep || retireYear;
-  const retireCal       = fireRetireYear ? today.getFullYear() + fireRetireYear : null;
-  const retireAtAge     = currentAge !== null && fireRetireYear ? currentAge + fireRetireYear : null;
-  const targetRetireCal = currentAge !== null && targetRetireAge ? today.getFullYear() + Math.max(0, targetRetireAge - currentAge) : null;
-  const retireEarly     = retireCal && targetRetireCal && retireCal < targetRetireCal;
-  const retireLate      = retireCal && targetRetireCal && retireCal > targetRetireCal;
+  const retireCal       = retireYear ? today.getFullYear() + Math.round(retireYear) : null;
+  const retireAtAge     = currentAge !== null && retireYear ? Math.round(currentAge + retireYear) : null;
+  const targetRetireCal = currentAge !== null && targetRetireAge
+    ? today.getFullYear() + Math.max(0, targetRetireAge - currentAge) : null;
 
   const card = (label, value, sub, color, opp) => `
     <div class="fin-kpi-card stat-card stat-card--${color}">
       <div class="fin-kpi-label">${escHtml(label)}</div>
       <div class="fin-kpi-value">${escHtml(String(value))}</div>
       <div class="fin-kpi-sub">${escHtml(sub)}</div>
-      ${opp ? `<div class="fin-kpi-opp">💡 ${escHtml(opp)}</div>` : ''}
+      ${opp ? `<div class="fin-kpi-opp">${escHtml(opp)}</div>` : ''}
     </div>`;
 
-  // Savings rate
-  const srColor = savingsRate >= 20 ? 'green' : savingsRate >= 10 ? 'amber' : 'red';
-  const srSub   = savingsRate >= 25 ? '✓ Excellent — ahead of schedule' : savingsRate >= 20 ? '✓ At the 20% target' : savingsRate >= 10 ? 'Good — push toward 20%' : 'Below the 10% floor';
-  const srOpp   = savingsRate < 20 && totalIncome > 0 ? `+${_fmtMoney(Math.max(1, totalIncome * 0.20 - (totalIncome - spend)))}/mo reaches 20%` : '';
+  // 1. Crossover Year — when compounding overtakes your savings contributions
+  const crossoverCal = crossoverYear ? today.getFullYear() + Math.round(crossoverYear) : null;
+  const crossoverAge = currentAge !== null && crossoverYear ? Math.round(currentAge + crossoverYear) : null;
+  let cvVal, cvSub, cvColor, cvOpp = '';
+  if (crossoverCal) {
+    cvVal   = String(crossoverCal);
+    cvSub   = crossoverAge ? `age ${crossoverAge} — returns exceed income` : 'returns exceed monthly income';
+    cvColor = crossoverYear <= 10 ? 'green' : crossoverYear <= 20 ? 'cyan' : 'blue';
+  } else {
+    cvVal   = 'Beyond window';
+    cvSub   = 'Compounding not yet dominant';
+    cvColor = 'gray';
+    cvOpp   = 'Increase invested % or savings rate to accelerate';
+  }
 
-  // Emergency fund
-  const efColor = efMonths >= 6 ? 'green' : efMonths >= 3 ? 'amber' : 'red';
-  const efSub   = efMonths >= 6 ? '✓ 6+ months covered' : efMonths >= 3 ? '3–6 months (target: 6)' : 'Under 3 months — priority';
-  const efOpp   = efMonths < 6 ? `+${_fmtMoneyCompact(Math.max(0, (6 - efMonths) * spend))} to reach 6-month cushion` : '';
-
-  // Debt load
-  const dtiColor = dtiPct < 15 ? 'green' : dtiPct < 28 ? 'amber' : 'red';
-  const dtiSub   = monthlyDebtPayments === 0 ? 'No liabilities tracked' : dtiPct < 15 ? '✓ Low burden' : dtiPct < 28 ? 'Manageable — under 28%' : 'Above safe limit (28%)';
-  const dtiOpp   = dtiPct >= 28 ? 'High ratio — focus extra cash on debt payoff' : '';
-
-  // FIRE progress
+  // 2. FIRE Progress
   const fpColor = firePct >= 100 ? 'green' : firePct >= 50 ? 'cyan' : firePct >= 25 ? 'blue' : 'gray';
-  const fpSub   = firePct >= 100 ? '✓ FIRE number reached!' : firePct >= 50 ? 'Halfway to FIRE' : firePct >= 25 ? 'Building momentum' : 'Early stage';
-  const fpOpp   = firePct < 25 ? 'Savings rate is the biggest lever at this stage' : '';
+  const fpSub   = firePct >= 100 ? 'FIRE number reached!'
+                : `${_fmtMoneyCompact(netWorth)} of ${_fmtMoneyCompact(fireNumber)}`;
+  const fpOpp   = firePct < 50 && totalIncome > 0
+    ? `Each +1% savings rate = ~${_fmtMoneyCompact(totalIncome * 0.01 * 12)}/yr more` : '';
 
-  // Retire year
+  // 3. Retire Year — shows target retirement year and whether portfolio will be funded
   let retVal, retSub, retColor, retOpp = '';
-  if (retireCal) {
-    retVal = `${retireCal}`;
-    const ageStr = retireAtAge ? ` (age ${retireAtAge})` : '';
-    if (retireEarly) {
-      const yrsEarly = targetRetireCal - retireCal;
-      retSub = `${yrsEarly} yr${yrsEarly !== 1 ? 's' : ''} early${ageStr}`;
-      retColor = 'green';
-    } else if (retireLate) {
-      const yrsLate = retireCal - targetRetireCal;
-      retSub = `${yrsLate} yr${yrsLate !== 1 ? 's' : ''} past target${ageStr}`;
-      retColor = 'amber';
-      retOpp = `Raise savings rate to reach FIRE by target age ${targetRetireAge}`;
+  if (targetRetireCal) {
+    retVal = String(targetRetireCal);
+    const ageStr = ` (age ${targetRetireAge})`;
+    if (nwAtRetireYear !== null && fireNumber > 0) {
+      const fundedPct = Math.round(nwAtRetireYear / fireNumber * 100);
+      retSub = `${_fmtMoneyCompact(nwAtRetireYear)} · ${fundedPct}% funded${ageStr}`;
+      if (fundedPct >= 100) {
+        retColor = 'green';
+      } else if (fundedPct >= 75) {
+        retColor = 'cyan';
+      } else if (fundedPct >= 50) {
+        retColor = 'amber';
+        const yearsLeft = Math.max(1, targetRetireCal - today.getFullYear());
+        retOpp = `+${_fmtMoneyCompact(Math.max(0, fireNumber - nwAtRetireYear) / (yearsLeft * 12))}/mo to fully fund`;
+      } else {
+        retColor = 'red';
+        const yearsLeft = Math.max(1, targetRetireCal - today.getFullYear());
+        retOpp = `+${_fmtMoneyCompact(Math.max(0, fireNumber - nwAtRetireYear) / (yearsLeft * 12))}/mo to fully fund`;
+      }
     } else {
-      retSub = `On target${ageStr}`;
-      retColor = 'cyan';
+      retSub = `Target retirement${ageStr}`;
+      retColor = 'gray';
+      retOpp = 'Set monthly spend to see funding status';
     }
-  } else if (targetRetireCal) {
-    retVal = `${targetRetireCal}`; retSub = 'Target — FIRE not in window'; retColor = 'gray';
-    retOpp = 'Extend projection window or increase savings rate';
+  } else if (retireCal) {
+    retVal = String(retireCal);
+    retSub = retireAtAge ? `FIRE year (age ${retireAtAge})` : 'FIRE year';
+    retColor = 'green';
   } else {
     retVal = '—'; retSub = 'Set birth date + target age'; retColor = 'gray';
   }
 
-  // Investment coverage
-  const ivColor = investYears >= 10 ? 'green' : investYears >= 5 ? 'cyan' : investYears >= 2 ? 'amber' : 'gray';
-  const ivSub   = `${_fmtMoneyCompact(investmentsBalance)} in investments`;
-  const ivOpp   = investYears < 5 && investYears >= 0 ? `${(5 - investYears).toFixed(1)} more yrs of expenses to add` : '';
+  // 4. Savings Rate
+  const srColor = savingsRate >= 25 ? 'green' : savingsRate >= 15 ? 'cyan' : savingsRate >= 5 ? 'amber' : 'red';
+  const srSub   = savingsRate >= 25 ? 'Excellent — on track for early FIRE'
+                : savingsRate >= 15 ? 'Good — push to 25% for FIRE acceleration'
+                : savingsRate >= 5  ? 'Below target — every +1% matters'
+                : 'Spending exceeds income — course correct now';
+  const srOpp   = savingsRate < 25 && totalIncome > 0
+    ? `+${_fmtMoney(Math.max(1, totalIncome * 0.25 - (totalIncome - spend)))}/mo reaches the 25% threshold` : '';
 
   return `<div class="fin-kpi-grid">
-    ${card('Savings Rate',    `${savingsRate.toFixed(1)}%`,               srSub,          srColor, srOpp)}
-    ${card('Emergency Fund',  `${efMonths.toFixed(1)} mo`,               efSub,          efColor, efOpp)}
-    ${card('Debt Load',       monthlyDebtPayments > 0 ? `${dtiPct.toFixed(1)}%` : 'None', dtiSub, dtiColor, dtiOpp)}
-    ${card('FIRE Progress',   `${Math.round(firePct)}%`,                 fpSub,          fpColor, fpOpp)}
-    ${card('Retire Year',     retVal,                                     retSub,         retColor, retOpp)}
-    ${card('Invest Coverage', investYears >= 0.1 ? `${investYears.toFixed(1)} yr` : '—', ivSub, ivColor, ivOpp)}
+    ${card('Compounding Year', cvVal, cvSub, cvColor, cvOpp)}
+    ${card('FI Progress',     `${Math.round(firePct)}%`, fpSub, fpColor, fpOpp)}
+    ${card('Retire Year',     retVal, retSub, retColor, retOpp)}
+    ${card('Savings Rate',    `${savingsRate.toFixed(1)}%`, srSub, srColor, srOpp)}
   </div>`;
 }
 
-function _renderGlideTable(currentAge, targetRetireAge, mode, yearsForward) {
+function _renderGlideTable(currentAge, targetRetireAge, preset, yearsForward, stockReturn = 0.07) {
   if (currentAge === null) return '';
   const today = new Date();
   const currentYear = today.getFullYear();
@@ -2422,7 +2632,7 @@ function _renderGlideTable(currentAge, targetRetireAge, mode, yearsForward) {
   for (let yr = 0; yr <= maxYears; yr += 5) {
     const age = currentAge + yr;
     if (age > 100) break;
-    const { stocksPct, bondsPct, annualReturn } = _calcGlide(age, mode);
+    const { stocksPct, bondsPct, annualReturn } = _calcGlide(age, preset, stockReturn);
     rows.push({ yr, age, year: currentYear + yr, stocksPct, bondsPct, annualReturn, isRetire: false });
   }
 
@@ -2430,7 +2640,7 @@ function _renderGlideTable(currentAge, targetRetireAge, mode, yearsForward) {
   if (targetRetireAge && targetRetireAge > currentAge) {
     const retYr = targetRetireAge - currentAge;
     if (!rows.find(r => r.age === targetRetireAge)) {
-      const { stocksPct, bondsPct, annualReturn } = _calcGlide(targetRetireAge, mode);
+      const { stocksPct, bondsPct, annualReturn } = _calcGlide(targetRetireAge, preset, stockReturn);
       const row = { yr: retYr, age: targetRetireAge, year: currentYear + retYr, stocksPct, bondsPct, annualReturn, isRetire: true };
       const idx = rows.findIndex(r => r.age > targetRetireAge);
       if (idx >= 0) rows.splice(idx, 0, row);
@@ -2441,19 +2651,19 @@ function _renderGlideTable(currentAge, targetRetireAge, mode, yearsForward) {
     }
   }
 
-  const stockRet  = mode === 'aggressive' ? '9%' : '7%';
-  const bondRet   = mode === 'aggressive' ? '4%' : '3.5%';
-  const modeLabel = mode === 'aggressive' ? 'Aggressive: stocks = 110 − age' : 'Safe: stocks = 100 − age';
+  const bondRet  = (stockReturn * 0.5 * 100).toFixed(1);
+  const formula  = preset === 'optimistic' ? '110 − age' : preset === 'conservative' ? '90 − age' : '100 − age';
+  const modeLabel = `${preset.charAt(0).toUpperCase() + preset.slice(1)}: stocks = ${formula}`;
 
   return `
     <div class="fin-panel">
       <div class="fin-panel-header">
         <h3>Portfolio glide path</h3>
-        <span style="font-size:12px;color:var(--text-muted)">${escHtml(modeLabel)} · stocks ${stockRet} · bonds ${bondRet}</span>
+        <span style="font-size:12px;color:var(--text-muted)">${escHtml(modeLabel)} · stocks ${(stockReturn*100).toFixed(1)}% · bonds ${bondRet}%</span>
       </div>
       <div class="fin-panel-body" style="padding:0">
         <table class="fin-glide-table">
-          <thead><tr><th>Year</th><th>Age</th><th>Allocation</th><th>Stocks</th><th>Bonds</th><th>Est. return / yr</th></tr></thead>
+          <thead><tr><th>Year</th><th>Age</th><th><span style="display:inline-flex;align-items:center;gap:6px">Allocation <span style="width:8px;height:8px;border-radius:2px;background:rgba(0,229,255,.85);display:inline-block"></span>stocks <span style="width:8px;height:8px;border-radius:2px;background:rgba(255,184,0,.70);display:inline-block"></span>bonds</span></th><th>Stocks %</th><th>Bonds %</th><th>Est. return / yr</th></tr></thead>
           <tbody>
             ${rows.map(r => {
               const sp = Math.round(r.stocksPct * 100), bp = Math.round(r.bondsPct * 100);
@@ -2476,10 +2686,18 @@ function _renderGlideTable(currentAge, targetRetireAge, mode, yearsForward) {
 async function _refreshExpenditures(c) {
   try {
     const { items } = await apiFetch('GET', '/finance/planning/expenditures');
-    _finPlanState.expenditures = items || [];
+    _finPlanState.expenditures = (items || []).map(e => ({ ...e, expected_date: _normDateISO(e.expected_date) || e.expected_date }));
   } catch(e) { /* keep existing */ }
   _renderExpList(c);
   _redrawProjection(c);
+}
+
+function _expRecurLabel(e) {
+  if (!e.is_recurring || !e.recurrence_months) return '';
+  const freq = e.recurrence_months === 1 ? 'monthly' : e.recurrence_months === 3 ? 'quarterly'
+             : e.recurrence_months === 6 ? 'semi-annual' : `every ${e.recurrence_months}mo`;
+  const until = e.recurrence_end_date ? ` until ${formatDateShort(e.recurrence_end_date)}` : '';
+  return ` · ${freq}${until}`;
 }
 
 function _renderExpList(c) {
@@ -2490,7 +2708,7 @@ function _renderExpList(c) {
     <div class="fin-list-row" data-id="${e.id}">
       <div class="fin-list-main">
         <div class="fin-list-title">${escHtml(e.name)} <span style="color:var(--neon-red)">${_fmtMoney(e.amount)}</span></div>
-        <div class="fin-list-sub">${e.expected_date ? `Expected ${formatDateShort(e.expected_date)}` : 'No date set'}${e.notes ? ' · ' + escHtml(e.notes) : ''}</div>
+        <div class="fin-list-sub">${e.expected_date ? `${e.is_recurring ? 'Starting' : 'Expected'} ${formatDateShort(e.expected_date)}` : 'No date set'}${_expRecurLabel(e)}${e.notes ? ' · ' + escHtml(e.notes) : ''}</div>
       </div>
       <div class="fin-list-actions">
         <button class="btn btn-secondary btn-sm plan-exp-edit" data-id="${e.id}">Edit</button>
@@ -2516,7 +2734,9 @@ function _renderExpList(c) {
 function _openExpModal(existing, onSave) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  const e = existing || { name: '', amount: '', expected_date: '', notes: '' };
+  const e = existing || { name: '', amount: '', expected_date: '', notes: '', is_recurring: 0, recurrence_months: 1, recurrence_end_date: '' };
+  const isRecur = !!e.is_recurring;
+  const recurMonths = e.recurrence_months || 1;
   overlay.innerHTML = `
     <div class="modal" style="width:440px">
       <div class="modal-header">
@@ -2525,13 +2745,32 @@ function _openExpModal(existing, onSave) {
       </div>
       <div class="modal-body">
         <div class="form-group"><label class="form-label">Name</label>
-          <input class="form-input" id="exp-name" value="${escHtml(e.name || '')}" placeholder="House down payment, New car, …" style="width:100%">
+          <input class="form-input" id="exp-name" value="${escHtml(e.name || '')}" placeholder="Mortgage, Car payment, Vacation, …" style="width:100%">
         </div>
         <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div><label class="form-label">Amount</label>
             <input class="form-input" id="exp-amount" type="number" step="0.01" value="${e.amount || ''}" style="width:100%"></div>
-          <div><label class="form-label">Expected date</label>
-            <input class="form-input" id="exp-date" type="date" value="${e.expected_date || ''}" style="width:100%"></div>
+          <div><label class="form-label" id="exp-date-label">${isRecur ? 'Start date' : 'Expected date'}</label>
+            <input class="form-input" id="exp-date" type="date" value="${_normDateISO(e.expected_date)}" style="width:100%"></div>
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="exp-recurring"${isRecur ? ' checked' : ''}>
+          <label class="form-label" for="exp-recurring" style="margin:0;cursor:pointer">Recurring payment</label>
+        </div>
+        <div id="exp-recur-fields" style="${isRecur ? '' : 'display:none'}">
+          <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div><label class="form-label">Frequency</label>
+              <select class="form-select" id="exp-freq">
+                <option value="1"${recurMonths===1?' selected':''}>Monthly</option>
+                <option value="3"${recurMonths===3?' selected':''}>Quarterly</option>
+                <option value="6"${recurMonths===6?' selected':''}>Semi-annual</option>
+                <option value="12"${recurMonths===12?' selected':''}>Annual</option>
+              </select>
+            </div>
+            <div><label class="form-label">End date <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+              <input class="form-input" id="exp-end-date" type="date" value="${_normDateISO(e.recurrence_end_date)}" style="width:100%">
+            </div>
+          </div>
         </div>
         <div class="form-group"><label class="form-label">Notes <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
           <textarea class="form-input" id="exp-notes" rows="2" style="width:100%">${escHtml(e.notes || '')}</textarea>
@@ -2548,12 +2787,20 @@ function _openExpModal(existing, onSave) {
   overlay.querySelector('.modal-close').addEventListener('click', dismiss);
   overlay.querySelector('.modal-cancel-btn').addEventListener('click', dismiss);
   overlay.addEventListener('click', ev => { if (ev.target === overlay) dismiss(); });
+  overlay.querySelector('#exp-recurring').addEventListener('change', function() {
+    overlay.querySelector('#exp-recur-fields').style.display = this.checked ? '' : 'none';
+    overlay.querySelector('#exp-date-label').textContent = this.checked ? 'Start date' : 'Expected date';
+  });
   overlay.querySelector('#exp-save').addEventListener('click', async () => {
+    const recurring = overlay.querySelector('#exp-recurring').checked;
     const body = {
-      name:          overlay.querySelector('#exp-name').value.trim(),
-      amount:        parseFloat(overlay.querySelector('#exp-amount').value) || 0,
-      expected_date: overlay.querySelector('#exp-date').value || null,
-      notes:         overlay.querySelector('#exp-notes').value.trim() || null,
+      name:                overlay.querySelector('#exp-name').value.trim(),
+      amount:              parseFloat(overlay.querySelector('#exp-amount').value) || 0,
+      expected_date:       _normDateISO(overlay.querySelector('#exp-date').value) || null,
+      notes:               overlay.querySelector('#exp-notes').value.trim() || null,
+      is_recurring:        recurring ? 1 : 0,
+      recurrence_months:   recurring ? parseInt(overlay.querySelector('#exp-freq').value) : null,
+      recurrence_end_date: recurring ? (_normDateISO(overlay.querySelector('#exp-end-date').value) || null) : null,
     };
     if (!body.name || !body.amount) { alert('Name and amount are required.'); return; }
     try {

@@ -4073,6 +4073,14 @@ body.page-calendar .main-content {
 .cal-timed-event:hover {
   background: rgba(96,165,250,.32);
 }
+.cal-timed-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-timed-time  { font-size: 12px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-timed-acts  { display: none; gap: 2px; position: absolute; top: 2px; right: 3px; }
+.cal-timed-event:hover .cal-timed-acts { display: flex; }
+.cal-timed-acts button { background: none; border: none; cursor: pointer; font-size: 11px; padding: 1px 3px; color: var(--text-secondary); line-height: 1; border-radius: 3px; }
+.cal-timed-acts button:hover { color: var(--text-primary); background: var(--bg-hover); }
+.cal-timed-event--sm .cal-timed-time { display: none; }
+.cal-timed-event--sm .cal-timed-title { font-size: 11px; line-height: 1.3; }
 
 /* Day view */
 #cal-day-view {
@@ -6218,6 +6226,15 @@ body.page-calendar .main-content {
 .tl-entry:hover .tl-entry-acts { opacity: 1; }
 .tl-entry-acts .btn-icon { font-size: 11px; width: 18px; height: 18px; color: var(--text-secondary); }
 
+/* Compact entry sizes: acts become absolute overlay, body gets right padding */
+.tl-entry--xs .tl-entry-body, .tl-entry--sm .tl-entry-body { padding: 1px 24px 1px 4px; justify-content: center; }
+.tl-entry--xs .tl-entry-name, .tl-entry--sm .tl-entry-name { font-size: 10px; line-height: 1.2; }
+.tl-entry--xs .tl-entry-acts, .tl-entry--sm .tl-entry-acts {
+  position: absolute; top: 50%; right: 2px; transform: translateY(-50%);
+  padding: 0; flex-shrink: 0; background: none;
+}
+.tl-entry--xs .tl-entry-acts .btn-icon { width: 16px; height: 16px; font-size: 10px; }
+
 /* Drag preview */
 .tl-preview {
   position: absolute;
@@ -7954,8 +7971,38 @@ body.page-calendar .main-content {
   display: flex; height: 8px; border-radius: 4px; overflow: hidden;
   width: 120px; background: var(--bg-hover);
 }
-.fin-glide-bar-s { background: rgba(77,159,255,.75); }
-.fin-glide-bar-b { background: rgba(0,229,255,.55); }
+.fin-glide-bar-s { background: rgba(0,229,255,.85); }
+.fin-glide-bar-b { background: rgba(255,184,0,.70); }
+
+/* ── Planning tab redesign additions ─────────────────────── */
+.fin-plan-preset-group {
+  display: flex; gap: 0;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-el); overflow: hidden;
+}
+.fin-plan-preset-btn {
+  padding: 6px 14px; font-size: 13px; font-weight: 500;
+  background: var(--bg-card); border: none; color: var(--text-secondary);
+  cursor: pointer; transition: background 0.12s, color 0.12s;
+}
+.fin-plan-preset-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.fin-plan-preset-btn.active[data-preset="conservative"] {
+  background: rgba(0,229,255,0.10); color: var(--neon-cyan); font-weight: 600;
+}
+.fin-plan-preset-btn.active[data-preset="balanced"] {
+  background: rgba(0,255,136,0.10); color: var(--neon-green); font-weight: 600;
+}
+.fin-plan-preset-btn.active[data-preset="optimistic"] {
+  background: rgba(255,184,0,0.10); color: var(--neon-amber); font-weight: 600;
+}
+.fin-kpi-grid { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) { .fin-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 500px)  { .fin-kpi-grid { grid-template-columns: 1fr; } }
+.fin-plan-advanced > summary {
+  padding: 4px 0; list-style: none; cursor: pointer;
+  font-size: 12px; color: var(--text-muted); outline: none; user-select: none;
+}
+.fin-plan-advanced > summary::-webkit-details-marker { display: none; }
+.fin-plan-advanced[open] > summary { color: var(--text-secondary); }
 
 .fin-rec-list { padding: 0; }
 .fin-rec-row {

@@ -168,7 +168,7 @@ function autoResizeTextarea(el) {
 /* ── Smart date inputs ───────────────────────────────────── */
 function parseSmartDate(raw) {
   if (!raw) return null;
-  const s = String(raw).trim();
+  const s = String(raw).trim().toLowerCase();
   if (!s) return null;
   function _now() { const d = new Date(); d.setHours(0,0,0,0); return d; }
   function _iso(d) {
@@ -194,6 +194,12 @@ function parseSmartDate(raw) {
   // mm-dd-yy or mm-dd-yyyy  (not YYYY-MM-DD which is handled above)
   const ds = s.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
   if (ds) { let y=parseInt(ds[3]); if(y<100)y+=2000; const d=new Date(y,parseInt(ds[1])-1,parseInt(ds[2])); if(!isNaN(d.getTime())&&d.getMonth()===parseInt(ds[1])-1) return _iso(d); }
+  // mm/dd or m/d — assume current year
+  const nd = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (nd) { const d=new Date(_now().getFullYear(),parseInt(nd[1])-1,parseInt(nd[2])); if(!isNaN(d.getTime())&&d.getMonth()===parseInt(nd[1])-1) return _iso(d); }
+  // mm-dd or m-d — assume current year
+  const ndd = s.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (ndd) { const d=new Date(_now().getFullYear(),parseInt(ndd[1])-1,parseInt(ndd[2])); if(!isNaN(d.getTime())&&d.getMonth()===parseInt(ndd[1])-1) return _iso(d); }
   return null;
 }
 
@@ -229,7 +235,7 @@ function initSmartDates(root) {
       const [y,m,d] = inp.value.split('-');
       inp.value = `${m}/${d}/${y}`;
     }
-    if (!inp.placeholder) inp.placeholder = 'mm/dd/yy · t · t+7 · w+1 · m+1';
+    if (!inp.placeholder) inp.placeholder = 'mm/dd · mm/dd/yy · t · t+7 · w+1 · m+1';
     inp.addEventListener('blur', _smartDateBlur);
     inp.addEventListener('keydown', e => { if(e.key==='Enter'){e.preventDefault();inp.blur();} });
     inp.addEventListener('focus',  () => { inp.style.borderColor=''; });

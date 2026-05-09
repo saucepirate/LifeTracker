@@ -177,6 +177,7 @@ class ExpenditureCreate(BaseModel):
     notes: Optional[str] = None
     is_recurring: int = 0
     recurrence_months: Optional[int] = None
+    recurrence_end_date: Optional[str] = None
 
 
 class ExpenditureUpdate(BaseModel):
@@ -186,10 +187,17 @@ class ExpenditureUpdate(BaseModel):
     notes: Optional[str] = None
     is_recurring: Optional[int] = None
     recurrence_months: Optional[int] = None
+    recurrence_end_date: Optional[str] = None
 
 
 class PlanningAssumptions(BaseModel):
     return_rate: Optional[float] = None
     inflation_rate: Optional[float] = None
     target_retire_age: Optional[int] = None
-    plan_mode: Optional[str] = None        # 'safe' | 'aggressive'
+    plan_mode: Optional[str] = None        # 'conservative' | 'balanced' | 'optimistic'
+    annual_raise_rate: Optional[float] = None
+    salary_cap: Optional[float] = None
+    savings_of_raise: Optional[float] = None
+    investment_frac: Optional[float] = None  # % (e.g. 65.0)
+    years_forward: Optional[int] = None
+    min_cash_balance: Optional[float] = None

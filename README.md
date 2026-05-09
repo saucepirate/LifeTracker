@@ -25,9 +25,9 @@ Browser (SPA)
 
 FastAPI (main.py)
   ├── /static/*                  ← serves static files
-  ├── /api/*                     ← 16 routers (~120 endpoints)
+  ├── /api/*                     ← 17 routers (~140 endpoints)
   │    └── routers/*.py
-  ├── database.py                ← SQLite schema + migrations
+  ├── database.py                ← SQLite schema + migrations (37 tables)
   ├── business.py                ← recurring tasks, streaks, on-track logic
   └── data/life_tracker.db       ← SQLite database (auto-created)
 ```
@@ -36,7 +36,7 @@ FastAPI (main.py)
 - No ORM — raw SQL throughout
 - Client router: `registerPage(name, fn)` / `loadPage(name)` in `app.js`
 - API wrapper: `apiFetch(method, path, body)` — prepends `/api`
-- Smart date parser: `t` = today, `t+5` = in 5 days, `w` = next week, `m` = next month, or `mm/dd/yyyy`
+- Smart date parser: `t` = today, `t+5` = in 5 days, `w` = next week, `m` = next month, `mm/dd` or `m/d` = current year assumed; case-insensitive
 - Theme and UI state persisted to `localStorage`
 
 ---
@@ -90,7 +90,7 @@ Multi-list task manager with a persistent detail pane.
 
 **Sort options:** due date, priority, created date, A–Z
 
-**Smart date entry:** type `t`, `t+3`, `w`, `m`, or `mm/dd` in any due-date field.
+**Smart date entry:** type `t`, `t+3`, `w`, `m`, `mm/dd`, or `m/d` in any due-date field; year defaults to current if omitted.
 
 ---
 
@@ -145,13 +145,83 @@ Two views:
 
 **Month view** — 7-column grid with item pills per day. Clicking a day opens a side panel with full detail. Items shown: calendar events, tasks (by due date), goal milestones, goal metrics.
 
-**Week view** — Time-blocked grid (7am–9pm) with an all-day row. Timed events are positioned by `start_time`. Click an empty slot to create an event pre-filled with that time.
+**Week view** — Time-blocked grid (7am–9pm) with an all-day row. Timed events are positioned by `start_time`. Click an empty slot to create an event pre-filled with that time. Events display inline edit (✎) and delete (✕) buttons. Short slots (≤32px height) show title only with no time row.
 
 **Event fields:** title, date, end date, all-day toggle, start/end time, notes, linked note, linked task
 
 **Read-only items:** tasks, milestones, metrics, and trip itinerary entries appear on the calendar but are edited in their own modules.
 
 **Navigation:** month/week toggle, prev/next arrows, Today button.
+
+---
+
+### Finance (`/finance`)
+
+**Files:** `static/js/finance.js` | **API:** `/api/finance`
+
+Personal finance dashboard with seven tabs.
+
+#### Overview tab
+- Net worth summary (assets − liabilities)
+- Spending breakdown for the current month by category (bar chart)
+- Categorized spending totals with color-coded category badges
+- Recent transactions list
+
+#### Transactions tab
+- Full transaction history with search and filter by account, category, date range
+- Manual transaction entry
+- Inline category assignment and notes editing
+- Mark as transfer to exclude from spending totals
+- Bulk reclassify: re-run auto-classification rules on all uncategorized transactions
+
+#### Import tab (Reconcile)
+- Upload CSV files exported from Fidelity, Chase, or generic bank format
+- Auto-detects format; parses date, description, amount, memo, MCC
+- Deduplicates against existing transactions (same account + date + amount + name)
+- Auto-classifies via merchant/MCC rules on import
+- Reconciliation queue: review unclassified transactions one at a time, assign category, optionally create a merchant or MCC rule for future imports
+
+#### Income tab
+- Define recurring income sources with amount and frequency (monthly, biweekly, weekly, annual, one-time)
+- Active/inactive toggle; date ranges for seasonal income
+- 12-month income history chart derived from actual transaction data when available
+
+#### Wealth tab
+- **Holdings** — track investments: stock, ETF, crypto, real estate, private equity, bonds, cash. Value = manual entry, or shares × current price, or cost basis fallback. Optional account linkage.
+- **Liabilities** — track debts: loan, credit card, mortgage, student loan, line of credit. Tracks principal, current balance, interest rate, payment schedule, lender.
+- **Financial Goals** — savings/debt-payoff/investment/retirement/emergency goals with target amount, current amount, and optional target date. Progress bar auto-calculated.
+- Net worth breakdown: liquid assets, investments, other assets, total liabilities
+
+#### Manage tab
+- **Accounts** — bank/brokerage accounts used to bucket transactions. Types: checking, credit, savings, brokerage, cash, other.
+- **Categories** — spending categories with color + icon. Flags: `is_income`, `is_savings`, `is_excluded` (excluded from spend totals). Drag-reorderable.
+- **Rules** — auto-classification rules. Type `merchant` (substring match on transaction name) or `mcc` (exact MCC code match). Priority-ordered; higher priority wins. User rules default to priority 10; system defaults to 0.
+- **Import History** — log of past CSV imports with counts of inserted/classified/skipped rows. Deletable.
+
+#### Planning tab
+Multi-decade financial projection with stacked area chart.
+
+**Inputs:**
+- Projected monthly income (derived from 12-month transaction trend via log-linear regression; falls back to income sources)
+- Monthly spend, target retirement age, years forward
+- Annual return %, inflation %, invested %
+- Advanced: annual raise %, salary cap, % of raise saved
+
+**Preset modes:** Conservative / Balanced / Optimistic — affects glide path (stock/bond allocation by age), expected return, and FIRE multiple (30×, 28.57×, 25×).
+
+**Projection model:**
+- Month-by-month loop tracking `investNW`, `cashNW`, and illiquid `otherNW` separately
+- Inflation applied to spending annually
+- Annual salary raises with optional cap and configurable savings fraction of raise
+- Post-retirement: income stops, pure spend drawdown begins
+- Monthly rebalancing: liquid NW above `min_cash_balance` floor is always snapped to target `invested %`
+- One-time and **recurring expenditures** (e.g., mortgage) deducted in the month they apply; recurring expenditures modeled in the curve but not shown as chart markers
+
+**Chart:** stacked area — cyan = cumulative contributions, green = cumulative investment gains, white line = total NW. Vertical markers: purple = FIRE year, amber = $1M year, green dashed = crossover year (when monthly returns first exceed monthly income), red dashed = one-time expenditures.
+
+**KPI cards:** Crossover Year, FIRE Progress, Retire Year, Savings Rate — each with an actionable sub-line.
+
+**Expenditures:** planned large expenses that reduce NW in the projection. Supports one-time and recurring (monthly, quarterly, semi-annual, or custom interval) with optional end date.
 
 ---
 
@@ -236,7 +306,7 @@ Day-by-day planner across the full trip date range.
 
 **Per entry:** title, type, start/end time, location, confirmation number, notes, attendee scope
 
-Free time blocks display with a dashed border — intentional gaps, not empty space.
+Short time blocks (< 30 min) display in a compact single-line format. Free time blocks display with a dashed border — intentional gaps, not empty space.
 
 After the trip ends, each day gets a **journal text area** — the itinerary becomes a read-only travel log.
 
@@ -262,7 +332,7 @@ Key-value settings stored in the `settings` table:
 
 ---
 
-## Database Schema (26 tables)
+## Database Schema (37 tables)
 
 ### Core
 
@@ -322,6 +392,21 @@ Key-value settings stored in the `settings` table:
 | `itinerary_entries` | Day-level activities/flights/hotels (times, location, confirmation #) |
 | `itinerary_day_notes` | Day-level journal entries for post-trip log |
 
+### Finance
+
+| Table | Purpose |
+|-------|---------|
+| `finance_accounts` | Bank/brokerage accounts (type, institution, active flag) |
+| `finance_categories` | Spending categories (color, icon, is_income, is_savings, is_excluded, sort_order) |
+| `finance_category_rules` | Auto-classification rules (merchant substring or MCC code, priority) |
+| `finance_transactions` | Transaction records (date, name, amount, memo, MCC, category, is_transfer, import_id) |
+| `finance_income_sources` | Recurring income entries (amount, frequency, date range) |
+| `finance_holdings` | Investment/asset holdings (symbol, shares, price, cost_basis, or direct value) |
+| `finance_liabilities` | Debts (kind, principal, balance, interest_rate, payment schedule, lender) |
+| `finance_goals` | Financial goals (kind, target_amount, current_amount, target_date) |
+| `finance_plan_expenditures` | Planned large expenses for projection modeling (one-time or recurring) |
+| `finance_imports` | CSV import log (filename, account, inserted/classified/skipped counts) |
+
 ---
 
 ## API Summary
@@ -344,6 +429,7 @@ All endpoints are under `/api/`. Full path = prefix + route.
 | budget | `/api/trips/{id}/budget` | Expenses CRUD + summary |
 | itinerary | `/api/trips/{id}/itinerary` | Entries CRUD + `/day-notes` |
 | packing_templates | `/api/packing-templates` | Templates + categories + items + suggested tasks CRUD |
+| finance | `/api/finance` | Accounts, categories, rules, transactions, import, income, holdings, liabilities, goals, planning CRUD + `/import`, `/reconcile`, `/planning/assumptions`, `/planning/expenditures` |
 
 ---
 
@@ -356,7 +442,7 @@ Shared helpers available globally:
 | `apiFetch(method, path, body)` | Fetch wrapper; prepends `/api`; throws on non-2xx |
 | `registerPage(name, fn)` | Register a page handler for the client router |
 | `loadPage(name)` | Navigate to a page (updates URL + nav highlight) |
-| `parseSmartDate(str)` | Parse `t`, `t+N`, `w`, `m`, `y`, or `mm/dd` → ISO date string |
+| `parseSmartDate(str)` | Parse `t`, `t+N`, `w`, `m`, `y`, `mm/dd`, `m/d` → ISO date string; year defaults to current; case-insensitive |
 | `escHtml(str)` | HTML-escape for safe innerHTML insertion |
 | `formatDate(iso)` | Human-friendly date display |
 | `animateProgress(el, pct)` | Animate a `.progress-fill` element to a percentage |
@@ -369,7 +455,7 @@ Shared helpers available globally:
 LifeTracker/
 ├── main.py                     ← FastAPI app + router registration
 ├── config.py                   ← Host/port/DB path
-├── database.py                 ← Schema + migrations (26 tables)
+├── database.py                 ← Schema + migrations (37 tables)
 ├── business.py                 ← Recurring tasks, streaks, on-track
 ├── requirements.txt
 ├── start.pyw                   ← Silent Windows launcher
@@ -377,7 +463,8 @@ LifeTracker/
 ├── models/
 │   ├── tasks.py
 │   ├── goals.py
-│   └── trips.py
+│   ├── trips.py
+│   └── finance.py
 ├── routers/
 │   ├── tasks.py
 │   ├── goals.py
@@ -392,7 +479,8 @@ LifeTracker/
 │   ├── packing.py
 │   ├── budget.py
 │   ├── itinerary.py
-│   └── packing_templates.py
+│   ├── packing_templates.py
+│   └── finance.py
 ├── static/
 │   ├── index.html
 │   ├── css/
@@ -404,6 +492,7 @@ LifeTracker/
 │       ├── goals.js
 │       ├── notes.js
 │       ├── calendar.js
+│       ├── finance.js
 │       ├── settings.js
 │       ├── games.js            ← Game hub shell
 │       ├── games-snake.js

@@ -857,10 +857,15 @@ function renderWeekGrid(weekStart, weekEnd) {
       const height = duration * CAL_HOUR_HEIGHT;
       if (startOffset < 0 || sh < CAL_HOUR_START) return;
       const tagCls = ev.tag_color ? ` tag-${ev.tag_color}` : '';
-      timedEventsHtml += `<div class="cal-timed-event${tagCls}" data-event-id="${ev.id}" data-date="${iso}"
+      const smCls = (height - 2) <= 32 ? ' cal-timed-event--sm' : '';
+      timedEventsHtml += `<div class="cal-timed-event${tagCls}${smCls}" data-event-id="${ev.id}" data-date="${iso}"
         style="top:${startOffset}px;height:${height - 2}px;left:calc(${(colIdx / 7) * 100}% + 2px);width:calc(${100 / 7}% - 4px)">
-        <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ev.title)}${(ev.recurrence_cadence || ev._is_recurrence) ? ' ↺' : ''}</div>
-        <div style="font-size:12px;opacity:.85">${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}</div>
+        <div class="cal-timed-title">${esc(ev.title)}${(ev.recurrence_cadence || ev._is_recurrence) ? ' ↺' : ''}</div>
+        <div class="cal-timed-time">${calFmtTime(ev.start_time)}${ev.end_time ? ' – ' + calFmtTime(ev.end_time) : ''}</div>
+        <div class="cal-timed-acts">
+          <button class="cal-timed-edit-btn" data-event-id="${ev.id}" data-date="${iso}" title="Edit">✎</button>
+          <button class="cal-timed-del-btn" data-event-id="${ev.id}" data-date="${iso}" title="Delete">✕</button>
+        </div>
       </div>`;
     });
 
@@ -913,11 +918,31 @@ function renderWeekGrid(weekStart, weekEnd) {
       slot.addEventListener('click', () => openEventModal(slot.dataset.date, slot.dataset.time, null));
     });
     container.querySelectorAll('.cal-timed-event').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', e => {
+        if (e.target.closest('.cal-timed-acts')) return;
         const evId = parseInt(el.dataset.eventId);
         const iso = el.dataset.date;
         const ev = ((_calData[iso] || {}).events || []).find(e => e.id === evId);
         if (ev) openEventModal(iso, null, ev);
+      });
+    });
+    container.querySelectorAll('.cal-timed-edit-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const evId = parseInt(btn.dataset.eventId);
+        const iso = btn.dataset.date;
+        const ev = ((_calData[iso] || {}).events || []).find(e => e.id === evId);
+        if (ev) openEventModal(iso, null, ev);
+      });
+    });
+    container.querySelectorAll('.cal-timed-del-btn').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (!confirm('Delete this event?')) return;
+        const evId = parseInt(btn.dataset.eventId);
+        await apiFetch('DELETE', `/calendar/events/${evId}`);
+        calRemoveEventFromData(evId);
+        renderWeekGrid(_calWeekStart, _calWeekEnd);
       });
     });
   } else {

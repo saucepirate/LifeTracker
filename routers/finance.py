@@ -880,62 +880,101 @@ def delete_fingoal(gid: int):
 
 
 # ── Planning ─────────────────────────────────────────────────────────────────
+def _income_trend(conn, today):
+    """6-month moving average anchored to the last month that has transactions.
+    Returns (by_month newest-first, slope, annual_rate_pct, projected_current)."""
+    twelve_ago = (today.replace(day=1) - timedelta(days=365)).replace(day=1)
+    rows = conn.execute(
+        """SELECT substr(t.date, 1, 7) AS bucket,
+                  COALESCE(SUM(t.amount), 0) AS total
+           FROM finance_transactions t
+           LEFT JOIN finance_categories c ON c.id = t.category_id
+           WHERE t.date >= ?
+             AND (t.amount > 0 OR IFNULL(c.is_income, 0) = 1)
+             AND IFNULL(c.is_excluded, 0) = 0
+             AND IFNULL(t.is_transfer, 0) = 0
+           GROUP BY bucket ORDER BY bucket ASC""",
+        (twelve_ago.isoformat(),)
+    ).fetchall()
+
+    by_month = [{'bucket': r['bucket'], 'total': round(float(r['total']), 2)} for r in rows]
+    if not by_month:
+        return [], 0.0, 0.0, 0.0
+
+    # Anchor to the most recent bucket with data, not today
+    last_year, last_month = map(int, by_month[-1]['bucket'].split('-'))
+    pivot_month = last_month - 6
+    pivot_year  = last_year
+    if pivot_month <= 0:
+        pivot_month += 12
+        pivot_year  -= 1
+    pivot_str = f"{pivot_year:04d}-{pivot_month:02d}"
+
+    recent = [m for m in by_month if m['bucket'] > pivot_str]
+    prior  = [m for m in by_month if m['bucket'] <= pivot_str]
+
+    recent_avg = sum(m['total'] for m in recent) / len(recent) if recent else 0.0
+    prior_avg  = sum(m['total'] for m in prior)  / len(prior)  if prior  else 0.0
+
+    # Annualise growth: compare the two 6-month halves
+    if prior_avg > 0 and recent_avg > 0:
+        half_year_rate = recent_avg / prior_avg - 1
+        annual_rate = round(((1 + half_year_rate) ** 2 - 1) * 100, 2)
+    else:
+        annual_rate = 0.0
+
+    return by_month[::-1], 0.0, annual_rate, round(recent_avg, 2)
+
+
 @router.get("/planning")
 def get_planning():
     conn = database.get_connection()
     today = _date.today()
 
-    # Net worth
+    # Net worth + actual allocation breakdown
     holding_rows = conn.execute("SELECT * FROM finance_holdings").fetchall()
     wealth = {'cash': 0.0, 'investments': 0.0, 'private': 0.0}
     INVEST_TYPES = {'stock', 'etf', 'bond', 'crypto'}
+    STOCK_TYPES  = {'stock', 'etf', 'crypto'}
+    actual_stock_val = 0.0
+    actual_bond_val  = 0.0
     for h in holding_rows:
         hd = dict(h)
         v = _holding_value(hd)
         if hd['type'] == 'cash':           wealth['cash']        += v
         elif hd['type'] in INVEST_TYPES:   wealth['investments'] += v
         else:                              wealth['private']     += v
+        if   hd['type'] in STOCK_TYPES:    actual_stock_val      += v
+        elif hd['type'] == 'bond':         actual_bond_val       += v
     assets = sum(wealth.values())
     liabilities_total = conn.execute(
         "SELECT COALESCE(SUM(current_balance), 0) FROM finance_liabilities"
     ).fetchone()[0]
     net_worth = assets - liabilities_total
-    investment_frac = wealth['investments'] / assets if assets > 0 else 0.0
+    liquid = wealth['cash'] + wealth['investments']
+    actual_stocks_pct = round(actual_stock_val / liquid * 100, 1) if liquid > 0 else None
+    actual_bonds_pct  = round(actual_bond_val  / liquid * 100, 1) if liquid > 0 else None
+    actual_cash_pct   = round(wealth['cash']   / liquid * 100, 1) if liquid > 0 else None
+    # investment_frac computed after settings are read (needs min_cash_balance)
 
-    # Monthly income: prefer 12-month transaction average (mirrors Income tab default),
-    # fall back to income sources if no transaction history exists.
-    twelve_ago = (today.replace(day=1) - timedelta(days=365)).replace(day=1)
-    inc_row = conn.execute(
-        """SELECT COALESCE(SUM(t.amount), 0)                   AS total,
-                  COUNT(DISTINCT substr(t.date, 1, 7))         AS months
-           FROM finance_transactions t
-           LEFT JOIN finance_categories c ON c.id = t.category_id
-           WHERE t.date >= ?
-             AND (t.amount > 0 OR IFNULL(c.is_income, 0) = 1)
-             AND IFNULL(c.is_excluded, 0) = 0
-             AND IFNULL(t.is_transfer, 0) = 0""",
-        (twelve_ago.isoformat(),)
-    ).fetchone()
-    txn_months = inc_row['months'] or 0
-    txn_total  = inc_row['total']  or 0
-
-    if txn_months > 0:
-        monthly_income = txn_total / txn_months
-        income_source  = 'transactions'
+    # Monthly income: exponential trend from last 12 months, fall back to income sources
+    by_month, trend_slope, trend_annual_rate, trend_projected = _income_trend(conn, today)
+    if trend_projected > 0:
+        monthly_income = trend_projected
+        income_source  = 'trend'
     else:
-        # Fall back to configured income sources
         incomes = conn.execute(
             "SELECT * FROM finance_income_sources WHERE is_active = 1"
         ).fetchall()
         monthly_income = 0.0
         for inc in incomes:
-            a = inc['amount'] or 0
-            f = inc['frequency'] or 'monthly'
+            a, f = inc['amount'] or 0, inc['frequency'] or 'monthly'
             if   f == 'monthly':   monthly_income += a
             elif f == 'biweekly':  monthly_income += a * 26 / 12
             elif f == 'weekly':    monthly_income += a * 52 / 12
             elif f == 'annual':    monthly_income += a / 12
         income_source = 'sources'
+        trend_slope = 0.0; trend_annual_rate = 0.0; by_month = []
 
     # 90-day avg monthly spend (÷ 3 months)
     start_90 = (today - timedelta(days=89)).isoformat()
@@ -950,39 +989,6 @@ def get_planning():
         (start_90,)
     ).fetchone()[0] or 0
     monthly_spend = round(spend_90 / 3, 2)
-
-    # Last complete month income (salary inference)
-    first_this_month = today.replace(day=1)
-    last_mo_end      = first_this_month - timedelta(days=1)
-    last_mo_start    = last_mo_end.replace(day=1)
-    last_mo_inc = conn.execute(
-        """SELECT COALESCE(SUM(t.amount), 0) AS total
-           FROM finance_transactions t
-           LEFT JOIN finance_categories c ON c.id = t.category_id
-           WHERE t.date BETWEEN ? AND ?
-             AND (t.amount > 0 OR IFNULL(c.is_income, 0) = 1)
-             AND IFNULL(c.is_excluded, 0) = 0
-             AND IFNULL(t.is_transfer, 0) = 0""",
-        (last_mo_start.isoformat(), last_mo_end.isoformat())
-    ).fetchone()
-    salary_last_month = round(float(last_mo_inc['total'] or 0), 2)
-
-    # 6-month income average → other income = avg - last month (floored at 0)
-    six_ago = (today.replace(day=1) - timedelta(days=181)).replace(day=1)
-    six_inc = conn.execute(
-        """SELECT COALESCE(SUM(t.amount), 0) AS total,
-                  COUNT(DISTINCT substr(t.date, 1, 7)) AS months
-           FROM finance_transactions t
-           LEFT JOIN finance_categories c ON c.id = t.category_id
-           WHERE t.date >= ?
-             AND (t.amount > 0 OR IFNULL(c.is_income, 0) = 1)
-             AND IFNULL(c.is_excluded, 0) = 0
-             AND IFNULL(t.is_transfer, 0) = 0""",
-        (six_ago.isoformat(),)
-    ).fetchone()
-    six_n = six_inc['months'] or 1
-    six_avg = round(float(six_inc['total'] or 0) / six_n, 2)
-    other_income_6mo = round(max(0.0, six_avg - salary_last_month), 2)
 
     # Monthly debt payments
     debt_row = conn.execute(
@@ -1009,32 +1015,52 @@ def get_planning():
         target_retire_age = int(_setting('target_retirement_age', 62))
     except Exception:
         target_retire_age = 62
-    plan_mode      = _setting_str('fin_plan_mode', 'safe')
-    if plan_mode not in ('safe', 'aggressive'):
-        plan_mode = 'safe'
+    plan_mode      = _setting_str('fin_plan_mode', 'balanced')
+    if plan_mode not in ('conservative', 'balanced', 'optimistic'):
+        plan_mode = 'balanced'
 
     exps = conn.execute(
         "SELECT * FROM finance_plan_expenditures ORDER BY expected_date ASC, id"
     ).fetchall()
 
+    annual_raise_rate = _setting('annual_raise_rate', 3.0)
+    salary_cap        = _setting('salary_cap', 0.0)
+    savings_of_raise  = _setting('savings_of_raise', 50.0)
+    years_forward     = int(_setting('years_forward', 30))
+    min_cash_balance  = _setting('min_cash_balance', 0.0)
+
+    # Compute investment_frac after reading min_cash_balance
+    effective_cash   = max(0.0, wealth['cash'] - min_cash_balance)
+    effective_liquid = wealth['investments'] + effective_cash
+    investment_frac  = wealth['investments'] / effective_liquid if effective_liquid > 0 else 0.0
+
     conn.close()
     return {
-        "net_worth":             round(net_worth, 2),
-        "cash_balance":          round(wealth['cash'], 2),
-        "investments_balance":   round(wealth['investments'], 2),
-        "monthly_income":        round(monthly_income, 2),
-        "income_source":         income_source,
-        "salary_last_month":     salary_last_month,
-        "other_income_6mo":      other_income_6mo,
-        "monthly_spend":         round(monthly_spend, 2),
-        "monthly_debt_payments": monthly_debt_payments,
-        "return_rate":           return_rate,
-        "inflation_rate":        inflation_rate,
-        "investment_frac":       round(investment_frac, 4),
-        "birth_date":            birth_date,
-        "target_retire_age":     target_retire_age,
-        "plan_mode":             plan_mode,
-        "expenditures":          [dict(e) for e in exps],
+        "net_worth":                 round(net_worth, 2),
+        "cash_balance":              round(wealth['cash'], 2),
+        "investments_balance":       round(wealth['investments'], 2),
+        "monthly_income":            round(monthly_income, 2),
+        "income_source":             income_source,
+        "income_by_month":           by_month,
+        "income_trend_slope":        trend_slope,
+        "income_trend_annual_rate":  trend_annual_rate,
+        "monthly_spend":             round(monthly_spend, 2),
+        "monthly_debt_payments":     monthly_debt_payments,
+        "return_rate":               return_rate,
+        "inflation_rate":            inflation_rate,
+        "investment_frac":           round(investment_frac * 100, 1),
+        "min_cash_balance":          round(min_cash_balance, 2),
+        "birth_date":                birth_date,
+        "target_retire_age":         target_retire_age,
+        "plan_mode":                 plan_mode,
+        "annual_raise_rate":         annual_raise_rate,
+        "salary_cap":                salary_cap,
+        "savings_of_raise":          savings_of_raise,
+        "years_forward":             years_forward,
+        "actual_stocks_pct":         actual_stocks_pct,
+        "actual_bonds_pct":          actual_bonds_pct,
+        "actual_cash_pct":           actual_cash_pct,
+        "expenditures":              [dict(e) for e in exps],
     }
 
 
@@ -1042,10 +1068,16 @@ def get_planning():
 def patch_planning_assumptions(body: PlanningAssumptions):
     conn = database.get_connection()
     updates = {
-        'plan_return_rate':       str(body.return_rate)        if body.return_rate        is not None else None,
-        'plan_inflation_rate':    str(body.inflation_rate)     if body.inflation_rate     is not None else None,
-        'target_retirement_age':  str(body.target_retire_age)  if body.target_retire_age  is not None else None,
-        'fin_plan_mode':          body.plan_mode               if body.plan_mode           is not None else None,
+        'plan_return_rate':      str(body.return_rate)        if body.return_rate        is not None else None,
+        'plan_inflation_rate':   str(body.inflation_rate)     if body.inflation_rate     is not None else None,
+        'target_retirement_age': str(body.target_retire_age)  if body.target_retire_age  is not None else None,
+        'fin_plan_mode':         body.plan_mode               if body.plan_mode          is not None else None,
+        'annual_raise_rate':     str(body.annual_raise_rate)  if body.annual_raise_rate  is not None else None,
+        'salary_cap':            str(body.salary_cap)         if body.salary_cap         is not None else None,
+        'savings_of_raise':      str(body.savings_of_raise)   if body.savings_of_raise   is not None else None,
+        'investment_frac':       str(body.investment_frac)    if body.investment_frac    is not None else None,
+        'years_forward':         str(body.years_forward)      if body.years_forward      is not None else None,
+        'min_cash_balance':      str(body.min_cash_balance)   if body.min_cash_balance   is not None else None,
     }
     for key, val in updates.items():
         if val is not None:
@@ -1071,10 +1103,10 @@ def create_plan_expenditure(body: ExpenditureCreate):
     conn = database.get_connection()
     c = conn.execute(
         """INSERT INTO finance_plan_expenditures
-               (name, amount, expected_date, notes, is_recurring, recurrence_months)
-           VALUES (?, ?, ?, ?, ?, ?) RETURNING *""",
+               (name, amount, expected_date, notes, is_recurring, recurrence_months, recurrence_end_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *""",
         (body.name, body.amount, body.expected_date, body.notes,
-         body.is_recurring, body.recurrence_months)
+         body.is_recurring, body.recurrence_months, body.recurrence_end_date)
     )
     row = c.fetchone()
     conn.commit(); conn.close()
