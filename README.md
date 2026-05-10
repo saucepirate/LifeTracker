@@ -25,9 +25,9 @@ Browser (SPA)
 
 FastAPI (main.py)
   ├── /static/*                  ← serves static files
-  ├── /api/*                     ← 17 routers (~140 endpoints)
+  ├── /api/*                     ← 18 routers (~150 endpoints)
   │    └── routers/*.py
-  ├── database.py                ← SQLite schema + migrations (37 tables)
+  ├── database.py                ← SQLite schema + migrations (46 tables)
   ├── business.py                ← recurring tasks, streaks, on-track logic
   └── data/life_tracker.db       ← SQLite database (auto-created)
 ```
@@ -198,6 +198,49 @@ Personal finance dashboard with seven tabs.
 - **Rules** — auto-classification rules. Type `merchant` (substring match on transaction name) or `mcc` (exact MCC code match). Priority-ordered; higher priority wins. User rules default to priority 10; system defaults to 0.
 - **Import History** — log of past CSV imports with counts of inserted/classified/skipped rows. Deletable.
 
+#### Investments tab
+
+**Files:** `static/js/investments.js` | **API:** `/api/investments`
+
+Portfolio tracker built around Fidelity CSV exports. Five sub-views:
+
+**Overview**
+- KPI cards: Portfolio Value, Total Gain/Loss, Total Return, Net Invested
+- Contributions vs Gains stacked bar
+- Per-account breakdown cards (all-accounts view)
+- Top performers / underperformers
+- Benchmark comparison panel (money-weighted return vs S&P 500 equivalent)
+- Performance chart: cumulative invested step line (cyan), estimated value trend (dashed green, shares × current price), snapshot dots (solid green)
+
+**Holdings**
+- Sortable table of all positions: symbol, description, account, shares, avg cost, price, cost basis, value, G/L $, G/L %, portfolio %
+- Group-by-account toggle; concentration bar under each % column
+
+**Activity**
+- Full buy/sell/dividend history; filter by symbol, account, action type
+- Group-by-symbol DCA view: avg cost, # buys, total invested, G/L % per symbol
+
+**Analysis**
+- Donut chart of portfolio allocation (top holdings + Others bucket)
+- Money-weighted benchmark comparison table
+- DCA performance table (symbols with ≥2 buys)
+- Auto-generated insights: concentration warnings, heavy losers, benchmark beat/miss, ETF/stock mix
+
+**Notes**
+- Per-symbol investment notes with types: Thesis, Action, Watchlist, General
+- Grouped by symbol; inline edit and delete
+
+**Import modal** — three import types:
+- `Portfolio_Positions_*.csv` — Fidelity positions export (snapshot import; all snapshots retained for history chart)
+- `Accounts_History*.csv` — Fidelity account history (buy/sell/dividend orders; UNIQUE constraint deduplicates on re-import)
+- SP500 CSV (`observation_date, SP500`) — S&P 500 historical data for benchmark comparison
+
+**Cost basis calculation** — hybrid approach: cash-flow math (buys − sells − dividends) for symbols with order history; Fidelity `cost_basis_total` fallback for others. Money market funds (SPAXX, NAV ≈ $1.00) are always excluded from order-based math to prevent deposit/withdrawal noise from inflating "invested" totals.
+
+**Account filter** — persistent pill bar (All Accounts + per-account) scopes Overview and Analysis to a single account.
+
+---
+
 #### Planning tab
 Multi-decade financial projection with stacked area chart.
 
@@ -222,6 +265,50 @@ Multi-decade financial projection with stacked area chart.
 **KPI cards:** Crossover Year, FIRE Progress, Retire Year, Savings Rate — each with an actionable sub-line.
 
 **Expenditures:** planned large expenses that reduce NW in the projection. Supports one-time and recurring (monthly, quarterly, semi-annual, or custom interval) with optional end date.
+
+---
+
+### Projects (`/projects`)
+
+**Files:** `static/js/projects.js` | **API:** `/api/projects`
+
+Multi-milestone project tracker. Projects appear as cards on the list view and open a tabbed detail view.
+
+**Project fields:** title, description, color (8 options), status (active/paused/completed/cancelled), start date, deadline, linked goal, ongoing flag, owners/collaborators list (name + role)
+
+**Health indicator** — auto-computed badge shown on the project header:
+- **Overdue** — final deadline in the past
+- **Blocked** — any task has `blocked` status
+- **At risk** — overdue milestone, or <50% done with ≤14 days to deadline
+- **On track** — otherwise; tooltip shows next milestone or days remaining
+
+#### Overview tab
+- Milestone sections: each milestone has a check node (click to toggle complete), mini progress bar, task tally, date badge (future/soon/overdue/done)
+- Tasks within each milestone: checkbox (mark done/undo), type icon, priority dot, chips for due date/assignee/cost
+- **Quick-add**: press Enter in the inline input at the bottom of any section to create a task instantly
+- **Owner filter** — pill bar appears when project has owners/collaborators; filters task lists by person or "Unassigned"
+- Completed tasks collapsed by default; show/hide with a pill button
+- Sidebar: final deadline card, next action card, upcoming dated items
+
+#### Timeline tab
+Monthly-grouped list of all dated milestones, tasks, and the final deadline. Milestones highlighted with a left cyan border. Past items marked overdue in red; completed items struck through.
+
+#### Budget tab
+- KPI cards: Estimated / Actual / Remaining
+- Progress bar (budget spend %)
+- Per-milestone cost breakdown table with per-task estimated and actual costs
+- "+ Add actual" button on tasks that have an estimate but no recorded actual cost
+
+#### Notes tab
+- Full rich-text note editor (Quill) embedded in the project detail view — same formatting as the main Notes module
+- Bullet points, ordered lists, headings, bold/italic/underline, hyperlinks (Ctrl+K), blockquotes
+- Auto-saves 1.2 s after last keystroke
+- Click any note card to open it in the editor; "← Notes" returns to the list
+- Notes are bidirectional: also accessible from the main Notes module filtered by project
+
+**Per-task fields:** title, type (todo/research/purchase/event), priority, status, due date, assigned to (dropdown from project people), milestone, estimated cost, actual cost, notes
+
+**Modals:** Add/edit project, add milestone, add task (full form), edit task (full form with status change)
 
 ---
 
@@ -332,7 +419,7 @@ Key-value settings stored in the `settings` table:
 
 ---
 
-## Database Schema (37 tables)
+## Database Schema (46 tables)
 
 ### Core
 
@@ -361,11 +448,20 @@ Key-value settings stored in the `settings` table:
 | `goal_log_entries` | Time-series log data for goals/habits |
 | `goal_task_log` | Tasks completed that count toward a goal |
 
+### Projects
+
+| Table | Purpose |
+|-------|---------|
+| `projects` | Project records (title, description, color, status, start_date, deadline, goal_id, is_ongoing) |
+| `project_owners` | Owners/collaborators per project (name, role) |
+| `project_milestones` | Milestones with due_date, status, is_deliverable, sort_order, completed_at |
+| `project_tasks` | Tasks within a project (milestone_id, status, priority, task_type, due_date, assigned_to, estimated_cost, actual_cost, notes) |
+
 ### Notes & Calendar
 
 | Table | Purpose |
 |-------|---------|
-| `notes` | Note records (title, content, pinned, links to goal/trip) |
+| `notes` | Note records (title, content, pinned, links to goal/trip/project) |
 | `note_tags` | M2M: notes ↔ tags |
 | `events` | Calendar events (all-day or timed, can span days, links to note/task) |
 
@@ -407,6 +503,16 @@ Key-value settings stored in the `settings` table:
 | `finance_plan_expenditures` | Planned large expenses for projection modeling (one-time or recurring) |
 | `finance_imports` | CSV import log (filename, account, inserted/classified/skipped counts) |
 
+### Investments
+
+| Table | Purpose |
+|-------|---------|
+| `inv_imports` | Import log for positions, orders, and SP500 uploads (type, filename, row count) |
+| `inv_positions` | Holdings snapshot per import (symbol, quantity, price, value, gain, cost basis) |
+| `inv_orders` | Buy/sell/dividend order history; UNIQUE on (date, account, symbol, quantity, amount) |
+| `inv_sp500` | S&P 500 daily closing values; primary key on `observation_date` (upsert on re-import) |
+| `inv_notes` | Per-symbol investment notes (type: thesis/action/watchlist/general) |
+
 ---
 
 ## API Summary
@@ -417,7 +523,8 @@ All endpoints are under `/api/`. Full path = prefix + route.
 |--------|--------|---------------|
 | tasks | `/api/tasks` | CRUD + `/today`, `/upcoming`, `/{id}/complete`, `/{id}/subtasks` |
 | goals | `/api/goals` | CRUD + `/items`, `/{id}/log`, `/{id}/milestones`, `/{id}/metrics`, `/{id}/habits` |
-| notes | `/api/notes` | CRUD + search/filter by tag, trip, goal |
+| projects | `/api/projects` | Projects CRUD + `/{id}/milestones` CRUD + `/{id}/tasks` CRUD |
+| notes | `/api/notes` | CRUD + search/filter by tag, trip, goal, project |
 | tags | `/api/tags` | CRUD (max 15 user tags) |
 | calendar | `/api/calendar` | `/month`, `/week`, `/day`, `/events` CRUD |
 | recurrences | `/api/recurrences` | CRUD + `/generate` |
@@ -430,6 +537,7 @@ All endpoints are under `/api/`. Full path = prefix + route.
 | itinerary | `/api/trips/{id}/itinerary` | Entries CRUD + `/day-notes` |
 | packing_templates | `/api/packing-templates` | Templates + categories + items + suggested tasks CRUD |
 | finance | `/api/finance` | Accounts, categories, rules, transactions, import, income, holdings, liabilities, goals, planning CRUD + `/import`, `/reconcile`, `/planning/assumptions`, `/planning/expenditures` |
+| investments | `/api/investments` | `/import/positions`, `/import/orders`, `/import/sp500`, `/imports` GET+DELETE, `/positions`, `/orders`, `/sp500`, `/accounts`, `/portfolio-history`, `/notes` CRUD |
 
 ---
 
@@ -463,8 +571,10 @@ LifeTracker/
 ├── models/
 │   ├── tasks.py
 │   ├── goals.py
+│   ├── projects.py
 │   ├── trips.py
-│   └── finance.py
+│   ├── finance.py
+│   └── investments.py
 ├── routers/
 │   ├── tasks.py
 │   ├── goals.py
@@ -475,12 +585,14 @@ LifeTracker/
 │   ├── dashboard.py
 │   ├── settings.py
 │   ├── games.py
+│   ├── projects.py
 │   ├── trips.py
 │   ├── packing.py
 │   ├── budget.py
 │   ├── itinerary.py
 │   ├── packing_templates.py
-│   └── finance.py
+│   ├── finance.py
+│   └── investments.py
 ├── static/
 │   ├── index.html
 │   ├── css/
@@ -492,7 +604,9 @@ LifeTracker/
 │       ├── goals.js
 │       ├── notes.js
 │       ├── calendar.js
+│       ├── projects.js
 │       ├── finance.js
+│       ├── investments.js
 │       ├── settings.js
 │       ├── games.js            ← Game hub shell
 │       ├── games-snake.js

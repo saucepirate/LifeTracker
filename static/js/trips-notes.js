@@ -2,6 +2,7 @@
 let _tnNotes      = [];
 let _tnAllTags    = [];
 let _tnGoals      = [];
+let _tnProjects   = [];
 let _tnSelectedId = null;
 let _tnSaveTimer  = null;
 let _tnQuill      = null;
@@ -23,14 +24,16 @@ async function renderNotesTab(container, trip) {
   container.innerHTML = '<div class="loading-state" style="padding:40px 0">Loading notes…</div>';
 
   try {
-    const [nd, td, gd] = await Promise.all([
+    const [nd, td, gd, pd] = await Promise.all([
       apiFetch('GET', `/notes?trip_id=${trip.id}`),
       apiFetch('GET', '/tags'),
       apiFetch('GET', '/goals'),
+      apiFetch('GET', '/projects/?status=active').catch(() => ({ items: [] })),
     ]);
-    _tnNotes   = nd.items;
-    _tnAllTags = td.items;
-    _tnGoals   = gd.items;
+    _tnNotes    = nd.items;
+    _tnAllTags  = td.items;
+    _tnGoals    = gd.items;
+    _tnProjects = pd.items || [];
   } catch(e) {
     container.innerHTML = `<div class="trip-tab-placeholder"><div>${escHtml(e.message)}</div></div>`;
     return;
@@ -100,23 +103,33 @@ function _tnRenderGrid() {
   });
 
   if (!list.length) {
-    grid.innerHTML = `<div style="grid-column:1/-1;padding:64px;text-align:center;font-size:14px;color:var(--text-muted)">
-      ${_tnSearch || _tnPinnedOnly ? 'No matching notes' : 'No notes yet — add one above'}
-    </div>`;
+    if (_tnSearch || _tnPinnedOnly) {
+      grid.innerHTML = `<div style="grid-column:1/-1;padding:64px;text-align:center;font-size:14px;color:var(--text-muted)">No matching notes</div>`;
+    } else {
+      grid.innerHTML = `<div style="grid-column:1/-1;padding:48px 24px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px;opacity:.4">📝</div>
+        <div style="font-size:15px;font-weight:500;color:var(--text-primary);margin-bottom:6px">No notes yet</div>
+        <div style="font-size:13px;color:var(--text-muted);max-width:280px;margin:0 auto 16px">Keep packing lists, hotel details, local tips, and anything else you'll need.</div>
+        <button class="btn btn-primary btn-sm" id="tn-empty-create">+ Create first note</button>
+      </div>`;
+      grid.querySelector('#tn-empty-create')?.addEventListener('click', _tnCreate);
+    }
     return;
   }
 
   grid.innerHTML = list.map(n => {
-    const snippet  = _stripHtml(n.content || '').slice(0, 140).trim();
-    const date     = formatDateShort(n.updated_at.slice(0, 10));
-    const tagsHTML = (n.tags || []).map(t =>
+    const snippet   = _stripHtml(n.content || '').slice(0, 140).trim();
+    const date      = formatDateShort(n.updated_at.slice(0, 10));
+    const tagsHTML  = (n.tags || []).map(t =>
       `<span class="tag-badge tag-${t.color}" style="font-size:11px;padding:1px 6px">${escHtml(t.name)}</span>`
     ).join('');
+    const linksHTML = _noteCardLinksHTML(n, _tnGoals, [], _tnProjects, { skipTrip: true });
     return `
       <div class="note-card" data-nid="${n.id}">
         ${n.pinned ? `<span class="note-card-pin">📌</span>` : ''}
         <div class="note-card-title">${escHtml(n.title)}</div>
         ${snippet ? `<div class="note-card-snippet">${escHtml(snippet)}</div>` : ''}
+        ${linksHTML}
         <div class="note-card-footer">
           <div style="display:flex;flex-wrap:wrap;gap:3px">${tagsHTML}</div>
           <span class="note-card-date">${date}</span>

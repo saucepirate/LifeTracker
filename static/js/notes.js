@@ -3,7 +3,9 @@ let _notes        = [];
 let _allTags      = [];
 let _nGoals       = [];
 let _nTrips       = [];
+let _nProjects    = [];
 let _nTripId      = null;
+let _nProjectId   = null;
 let _nSelectedId  = null;
 let _nTagFilters  = new Set();
 let _nSearch      = '';
@@ -18,16 +20,18 @@ registerPage('notes', async function(content) {
   _quill       = null;
 
   try {
-    const [nd, td, gd, trips] = await Promise.all([
+    const [nd, td, gd, trips, projs] = await Promise.all([
       apiFetch('GET', '/notes'),
       apiFetch('GET', '/tags'),
       apiFetch('GET', '/goals'),
       apiFetch('GET', '/trips').catch(() => ({ upcoming: [], planning: [], past: [] })),
+      apiFetch('GET', '/projects/?status=active').catch(() => ({ items: [] })),
     ]);
-    _notes   = nd.items;
-    _allTags = td.items;
-    _nGoals  = gd.items;
-    _nTrips  = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
+    _notes    = nd.items;
+    _allTags  = td.items;
+    _nGoals   = gd.items;
+    _nTrips   = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
+    _nProjects = projs.items || [];
   } catch(e) {
     content.innerHTML = `<div class="empty-state"><div class="empty-state-title">Couldn't load notes</div></div>`;
     return;
@@ -119,7 +123,14 @@ function renderNFilters() {
      </select>`,
     _nTripId !== null) : '';
 
-  container.innerHTML = `<div class="task-filter-bar">${tagsSection}${optionsSection}${tripSection}</div>`;
+  const projectSection = _nProjects.length ? mkSection('Project',
+    `<select id="n-project-filter" class="tf-goal-select" style="min-width:140px">
+       <option value="">All projects</option>
+       ${_nProjects.map(p => `<option value="${p.id}"${_nProjectId === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`).join('')}
+     </select>`,
+    _nProjectId !== null) : '';
+
+  container.innerHTML = `<div class="task-filter-bar">${tagsSection}${optionsSection}${tripSection}${projectSection}</div>`;
 
   container.querySelectorAll('.tf-section-hdr').forEach(hdr => {
     hdr.addEventListener('click', () => {
@@ -156,6 +167,12 @@ function renderNFilters() {
     renderNFilters();
     _renderGrid();
   });
+
+  container.querySelector('#n-project-filter')?.addEventListener('change', e => {
+    _nProjectId = parseInt(e.target.value) || null;
+    renderNFilters();
+    _renderGrid();
+  });
 }
 
 function _renderGrid() {
@@ -176,8 +193,9 @@ function _renderGrid() {
       [..._nTagFilters].every(tid => (n.tags || []).some(t => t.id === tid))
     );
   }
-  if (_nPinnedOnly) list = list.filter(n => n.pinned);
-  if (_nTripId)     list = list.filter(n => n.trip_id === _nTripId);
+  if (_nPinnedOnly)  list = list.filter(n => n.pinned);
+  if (_nTripId)      list = list.filter(n => n.trip_id === _nTripId);
+  if (_nProjectId)   list = list.filter(n => n.project_id === _nProjectId);
 
   list.sort((a, b) => {
     if (a.pinned !== b.pinned) return b.pinned - a.pinned;
@@ -194,16 +212,18 @@ function _renderGrid() {
   }
 
   grid.innerHTML = list.map(n => {
-    const snippet = _stripHtml(n.content || '').slice(0, 140).trim();
-    const date    = formatDateShort(n.updated_at.slice(0, 10));
-    const tagsHTML = (n.tags || []).map(t =>
+    const snippet   = _stripHtml(n.content || '').slice(0, 140).trim();
+    const date      = formatDateShort(n.updated_at.slice(0, 10));
+    const tagsHTML  = (n.tags || []).map(t =>
       `<span class="tag-badge tag-${t.color}" style="font-size:11px;padding:1px 6px">${escHtml(t.name)}</span>`
     ).join('');
+    const linksHTML = _noteCardLinksHTML(n, _nGoals, _nTrips, _nProjects);
     return `
       <div class="note-card" data-nid="${n.id}">
         ${n.pinned ? `<span class="note-card-pin">📌</span>` : ''}
         <div class="note-card-title">${escHtml(n.title)}</div>
         ${snippet ? `<div class="note-card-snippet">${escHtml(snippet)}</div>` : ''}
+        ${linksHTML}
         <div class="note-card-footer">
           <div style="display:flex;flex-wrap:wrap;gap:3px">${tagsHTML}</div>
           <span class="note-card-date">${date}</span>
@@ -270,6 +290,16 @@ async function _renderEditorView(note) {
             <div class="notes-sidebar-section">
               <div class="notes-tasks-label" style="margin-bottom:6px">GOAL</div>
               <div id="n-goal-bar">${_goalBarHTML(note)}</div>
+            </div>
+            <div class="divider" style="margin:8px 0"></div>
+            <div class="notes-sidebar-section">
+              <div class="notes-tasks-label" style="margin-bottom:6px">PROJECT</div>
+              <div id="n-project-bar">${_projectBarHTML(note)}</div>
+            </div>
+            <div class="divider" style="margin:8px 0"></div>
+            <div class="notes-sidebar-section">
+              <div class="notes-tasks-label" style="margin-bottom:6px">TRIP</div>
+              <div id="n-trip-bar">${_tripBarHTML(note)}</div>
             </div>
             <div class="divider" style="margin:8px 0"></div>
             <div class="notes-tasks-header">
@@ -381,6 +411,12 @@ async function _renderEditorView(note) {
   // Goal link bar
   _wireGoalBar(note);
 
+  // Project link bar
+  _wireProjectBar(note);
+
+  // Trip link bar
+  _wireTripBar(note);
+
   // Tags
   content.querySelectorAll('#n-tags-bar .n-tag-pill').forEach(pill => {
     pill.addEventListener('click', async () => {
@@ -475,15 +511,41 @@ function _upsertNote(updated) {
   if (idx >= 0) _notes[idx] = updated; else _notes.unshift(updated);
 }
 
+// ── Shared card backlink chips (used by main Notes, Trip Notes, Project Notes) ─
+function _noteCardLinksHTML(note, goals, trips, projects, { skipGoal = false, skipTrip = false, skipProject = false } = {}) {
+  const chips = [];
+  if (!skipGoal && note.goal_id) {
+    const g = goals.find(g => g.id === note.goal_id);
+    if (g) chips.push(`<span class="note-link-chip note-link-chip--goal" title="${escHtml(g.title)}">${escHtml(g.title)}</span>`);
+  }
+  if (!skipTrip && note.trip_id) {
+    const t = trips.find(t => t.id === note.trip_id);
+    if (t) chips.push(`<span class="note-link-chip note-link-chip--trip" title="${escHtml(t.name)}">${escHtml(t.name)}</span>`);
+  }
+  if (!skipProject && note.project_id) {
+    const p = projects.find(p => p.id === note.project_id);
+    if (p) {
+      const color = (typeof PROJ_COLOR_HEX !== 'undefined' && PROJ_COLOR_HEX[p.color]) || '#00E5FF';
+      chips.push(`<span class="note-link-chip" style="background:${color}14;color:${color};border-color:${color}28" title="${escHtml(p.title)}">${escHtml(p.title)}</span>`);
+    }
+  }
+  if ((note.task_count || 0) > 0) {
+    chips.push(`<span class="note-link-chip note-link-chip--tasks">${note.task_count} task${note.task_count !== 1 ? 's' : ''}</span>`);
+  }
+  return chips.length ? `<div class="note-links-row">${chips.join('')}</div>` : '';
+}
+
 // ── Goal link bar ─────────────────────────────────────────────
 function _goalBarHTML(note) {
   if (note.linked_goal) {
     return `
-      <div class="notes-goal-chip">
-        <span class="notes-goal-chip-label">${escHtml(note.linked_goal.title)}</span>
-        <button class="notes-goal-unlink" id="n-goal-unlink" title="Unlink goal">×</button>
-      </div>
-      <button class="btn btn-secondary btn-sm" id="n-goal-nav" style="font-size:11px;padding:2px 6px;margin-top:5px;width:100%">Open goal →</button>`;
+      <div class="notes-entity-card" style="background:color-mix(in srgb,var(--color-goals) 10%,transparent);border-color:color-mix(in srgb,var(--color-goals) 28%,transparent);color:var(--color-goals)">
+        <div class="notes-entity-card-name">${escHtml(note.linked_goal.title)}</div>
+        <div class="notes-entity-card-row">
+          <button class="notes-entity-nav-btn" id="n-goal-nav">Open goal →</button>
+          <button class="notes-entity-unlink-btn" id="n-goal-unlink" title="Unlink">×</button>
+        </div>
+      </div>`;
   }
   const opts = _nGoals.map(g => `<option value="${g.id}">${escHtml(g.title)}</option>`).join('');
   return `
@@ -491,7 +553,7 @@ function _goalBarHTML(note) {
       <option value="">— Choose goal —</option>
       ${opts}
     </select>
-    <button class="btn btn-secondary btn-sm" id="n-goal-link-btn" style="font-size:12px;padding:2px 6px;width:100%">+ Link goal</button>`;
+    <button class="notes-entity-link-btn" id="n-goal-link-btn">+ Link goal</button>`;
 }
 
 function _wireGoalBar(note) {
@@ -547,6 +609,167 @@ function _wireGoalBar(note) {
       if (e.key === 'Escape') {
         sel.style.display = 'none';
         bar.querySelector('#n-goal-link-btn').style.display = '';
+      }
+    });
+  }
+}
+
+// ── Project link bar ─────────────────────────────────────────
+function _projectBarHTML(note) {
+  if (note.linked_project) {
+    const color = (typeof PROJ_COLOR_HEX !== 'undefined' && PROJ_COLOR_HEX[note.linked_project.color]) || 'var(--neon-cyan)';
+    return `
+      <div class="notes-entity-card" style="background:${color}12;border-color:${color}30;color:${color}">
+        <div class="notes-entity-card-name">${escHtml(note.linked_project.title)}</div>
+        <div class="notes-entity-card-row">
+          <button class="notes-entity-nav-btn" id="n-proj-nav">Open project →</button>
+          <button class="notes-entity-unlink-btn" id="n-proj-unlink" title="Unlink">×</button>
+        </div>
+      </div>`;
+  }
+  const opts = _nProjects.map(p => `<option value="${p.id}">${escHtml(p.title)}</option>`).join('');
+  if (!opts) return `<div style="font-size:12px;color:var(--text-muted)">No active projects</div>`;
+  return `
+    <select class="form-select" id="n-proj-select" style="font-size:12px;padding:3px 6px;height:auto;width:100%;display:none">
+      <option value="">— Choose project —</option>
+      ${opts}
+    </select>
+    <button class="notes-entity-link-btn" id="n-proj-link-btn">+ Link project</button>`;
+}
+
+function _wireProjectBar(note) {
+  const bar = document.getElementById('n-project-bar');
+  if (!bar) return;
+
+  bar.querySelector('#n-proj-unlink')?.addEventListener('click', async () => {
+    try {
+      const updated = await apiFetch('PUT', `/notes/${note.id}`, { clear_project_id: true });
+      note.linked_project = null;
+      note.project_id = null;
+      _upsertNote(updated);
+      bar.innerHTML = _projectBarHTML(note);
+      _wireProjectBar(note);
+    } catch(e) {}
+  });
+
+  bar.querySelector('#n-proj-nav')?.addEventListener('click', () => {
+    window._openProjectId = note.linked_project.id;
+    loadPage('projects');
+  });
+
+  const linkBtn = bar.querySelector('#n-proj-link-btn');
+  if (linkBtn) {
+    linkBtn.addEventListener('click', () => {
+      linkBtn.style.display = 'none';
+      const sel = bar.querySelector('#n-proj-select');
+      sel.style.display = '';
+      sel.focus();
+    });
+  }
+
+  const sel = bar.querySelector('#n-proj-select');
+  if (sel) {
+    sel.addEventListener('change', async () => {
+      const pid = parseInt(sel.value);
+      if (!pid) {
+        sel.style.display = 'none';
+        bar.querySelector('#n-proj-link-btn').style.display = '';
+        return;
+      }
+      try {
+        const updated = await apiFetch('PUT', `/notes/${note.id}`, { project_id: pid });
+        const p = _nProjects.find(p => p.id === pid);
+        note.linked_project = p ? { id: p.id, title: p.title, color: p.color } : null;
+        note.project_id = pid;
+        _upsertNote(updated);
+        bar.innerHTML = _projectBarHTML(note);
+        _wireProjectBar(note);
+      } catch(e) {}
+    });
+    sel.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        sel.style.display = 'none';
+        bar.querySelector('#n-proj-link-btn').style.display = '';
+      }
+    });
+  }
+}
+
+// ── Trip link bar ─────────────────────────────────────────────
+function _tripBarHTML(note) {
+  if (note.linked_trip) {
+    return `
+      <div class="notes-entity-card" style="background:rgba(255,184,0,0.10);border-color:rgba(255,184,0,0.28);color:var(--neon-amber)">
+        <div class="notes-entity-card-name">${escHtml(note.linked_trip.name)}</div>
+        <div class="notes-entity-card-row">
+          <button class="notes-entity-nav-btn" id="n-trip-nav">Open trip →</button>
+          <button class="notes-entity-unlink-btn" id="n-trip-unlink" title="Unlink">×</button>
+        </div>
+      </div>`;
+  }
+  const opts = _nTrips.map(t => `<option value="${t.id}">${escHtml(t.name)}</option>`).join('');
+  if (!opts) return `<div style="font-size:12px;color:var(--text-muted)">No trips</div>`;
+  return `
+    <select class="form-select" id="n-trip-select" style="font-size:12px;padding:3px 6px;height:auto;width:100%;display:none">
+      <option value="">— Choose trip —</option>
+      ${opts}
+    </select>
+    <button class="notes-entity-link-btn" id="n-trip-link-btn">+ Link trip</button>`;
+}
+
+function _wireTripBar(note) {
+  const bar = document.getElementById('n-trip-bar');
+  if (!bar) return;
+
+  bar.querySelector('#n-trip-unlink')?.addEventListener('click', async () => {
+    try {
+      const updated = await apiFetch('PUT', `/notes/${note.id}`, { clear_trip_id: true });
+      note.linked_trip = null;
+      note.trip_id = null;
+      _upsertNote(updated);
+      bar.innerHTML = _tripBarHTML(note);
+      _wireTripBar(note);
+    } catch(e) {}
+  });
+
+  bar.querySelector('#n-trip-nav')?.addEventListener('click', () => {
+    window._openTripId = note.linked_trip.id;
+    loadPage('trips');
+  });
+
+  const linkBtn = bar.querySelector('#n-trip-link-btn');
+  if (linkBtn) {
+    linkBtn.addEventListener('click', () => {
+      linkBtn.style.display = 'none';
+      const sel = bar.querySelector('#n-trip-select');
+      sel.style.display = '';
+      sel.focus();
+    });
+  }
+
+  const sel = bar.querySelector('#n-trip-select');
+  if (sel) {
+    sel.addEventListener('change', async () => {
+      const tid = parseInt(sel.value);
+      if (!tid) {
+        sel.style.display = 'none';
+        bar.querySelector('#n-trip-link-btn').style.display = '';
+        return;
+      }
+      try {
+        const updated = await apiFetch('PUT', `/notes/${note.id}`, { trip_id: tid });
+        const t = _nTrips.find(t => t.id === tid);
+        note.linked_trip = t ? { id: t.id, name: t.name } : null;
+        note.trip_id = tid;
+        _upsertNote(updated);
+        bar.innerHTML = _tripBarHTML(note);
+        _wireTripBar(note);
+      } catch(e) {}
+    });
+    sel.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        sel.style.display = 'none';
+        bar.querySelector('#n-trip-link-btn').style.display = '';
       }
     });
   }

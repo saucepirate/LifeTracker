@@ -223,19 +223,91 @@ def get_dashboard():
                ORDER BY e.date ASC, e.start_time ASC""",
             [in7, today, in7, today]
         ).fetchall()
+        rec_ids = [dict(r)['id'] for r in event_rows if dict(r).get('recurrence_cadence')]
+        exc_map = {}
+        if rec_ids:
+            ph = ','.join('?' * len(rec_ids))
+            for ex in conn.execute(
+                f"SELECT event_id, exception_date FROM event_exceptions WHERE event_id IN ({ph})",
+                rec_ids
+            ).fetchall():
+                exc_map.setdefault(ex['event_id'], set()).add(ex['exception_date'])
         agenda_events = []
         for row in event_rows:
             e = dict(row)
             e['all_day'] = bool(e['all_day'])
             if e.get('recurrence_cadence'):
-                for occ in _expand_recurring(e, today, in7):
+                for occ in _expand_recurring(e, today, in7, exceptions=exc_map.get(e['id'])):
                     if today <= occ['date'] <= in7:
                         agenda_events.append(occ)
             else:
                 if today <= e['date'] <= in7:
                     agenda_events.append(e)
+
+        # Also include timed day-plan items (not linked to a calendar event)
+        plan_rows = conn.execute(
+            """SELECT dpi.id, dpi.title, dpi.plan_date AS date, dpi.start_time, dpi.end_time,
+                      tg.name AS tag_name, tg.color AS tag_color
+               FROM day_plan_items dpi
+               LEFT JOIN tags tg ON tg.id = dpi.tag_id
+               WHERE dpi.plan_date >= ? AND dpi.plan_date <= ?
+                 AND dpi.start_time IS NOT NULL
+                 AND dpi.status != 'skipped'
+                 AND dpi.cal_event_id IS NULL""",
+            (today, in7)
+        ).fetchall()
+        for p in plan_rows:
+            p = dict(p)
+            agenda_events.append({
+                'id': -(p['id']), 'title': p['title'],
+                'date': p['date'], 'all_day': False,
+                'start_time': p['start_time'], 'end_time': p['end_time'],
+                'tag_name': p.get('tag_name'), 'tag_color': p.get('tag_color'),
+            })
+        agenda_events.sort(key=lambda e: (e['date'], e.get('start_time') or 'zz'))
     except Exception:
         agenda_events = []
+
+    # Active projects widget (INT-011–016)
+    try:
+        proj_rows = conn.execute(
+            """SELECT p.id, p.title, p.color, p.status, p.deadline, p.goal_id
+               FROM projects p WHERE p.status = 'active'
+               ORDER BY p.deadline IS NULL, p.deadline ASC""",
+        ).fetchall()
+        active_projects = []
+        for r in proj_rows:
+            proj = dict(r)
+            counts = conn.execute(
+                """SELECT COUNT(CASE WHEN status NOT IN ('cancelled','skipped') THEN 1 END) as total,
+                          SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done
+                   FROM project_tasks WHERE project_id = ?""", (r['id'],)
+            ).fetchone()
+            proj['task_total'] = counts['total'] or 0
+            proj['task_done']  = counts['done'] or 0
+            proj['progress']   = round(proj['task_done'] / proj['task_total'] * 100) if proj['task_total'] else 0
+            proj['overdue_tasks'] = conn.execute(
+                "SELECT COUNT(*) FROM project_tasks WHERE project_id=? AND status IN ('todo','in_progress') AND due_date < ? AND due_date IS NOT NULL",
+                (r['id'], today)
+            ).fetchone()[0]
+            next_ms = conn.execute(
+                "SELECT title, due_date FROM project_milestones WHERE project_id=? AND status!='completed' ORDER BY due_date ASC NULLS LAST LIMIT 1",
+                (r['id'],)
+            ).fetchone()
+            proj['next_milestone'] = dict(next_ms) if next_ms else None
+            next_task = conn.execute(
+                "SELECT title FROM project_tasks WHERE project_id=? AND status IN ('todo','in_progress') ORDER BY due_date ASC NULLS LAST, sort_order ASC LIMIT 1",
+                (r['id'],)
+            ).fetchone()
+            proj['next_action'] = next_task['title'] if next_task else None
+            upcoming_ms = conn.execute(
+                "SELECT title, due_date FROM project_milestones WHERE project_id=? AND status!='completed' AND due_date>=? AND due_date<=? ORDER BY due_date ASC LIMIT 3",
+                (r['id'], today, in30)
+            ).fetchall()
+            proj['upcoming_milestones'] = [dict(m) for m in upcoming_ms]
+            active_projects.append(proj)
+    except Exception:
+        active_projects = []
 
     due_today_pending = len([t for t in today_tasks if t['due_date'] == today])
     completed_today   = conn.execute(
@@ -312,4 +384,5 @@ def get_dashboard():
         "pinned_milestones": pinned_milestones,
         "pinned_metrics":    pinned_metrics,
         "activity_chart":    activity_chart,
+        "active_projects":   active_projects,
     }

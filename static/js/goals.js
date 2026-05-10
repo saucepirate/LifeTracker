@@ -473,6 +473,28 @@ function goalCardHTML(g) {
     );
   }
 
+  if ((g.linked_projects || []).length > 0) {
+    const colorHex = (typeof PROJ_COLOR_HEX !== 'undefined') ? PROJ_COLOR_HEX : {};
+    cardSections.push((g.linked_projects).map(p => {
+      const col = colorHex[p.color] || 'var(--text-muted)';
+      const pct = p.progress || 0;
+      const riskMark = p.status !== 'completed' && p.is_at_risk
+        ? `<span style="font-size:11px;color:var(--neon-amber);margin-left:3px">⚠</span>` : '';
+      return `
+        <div style="margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">
+            <span style="width:7px;height:7px;border-radius:50%;background:${col};flex-shrink:0"></span>
+            <span style="font-size:13px;color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.title)}</span>
+            ${riskMark}
+            <span style="font-size:12px;color:var(--text-muted)">${pct}%</span>
+          </div>
+          <div style="height:2px;background:var(--bg-hover);border-radius:2px;overflow:hidden;margin-left:12px">
+            <div style="height:100%;width:${pct}%;background:${col};border-radius:2px;opacity:.75"></div>
+          </div>
+        </div>`;
+    }).join(''));
+  }
+
   const typeSection = cardSections.length
     ? `<div class="goal-card-type-section">${cardSections.join('<div style="height:1px;background:rgba(0,0,0,0.06);margin:6px 0"></div>')}</div>`
     : '';
@@ -609,6 +631,36 @@ function renderGDetail(g) {
     heroChips.push(`<span class="d-g-hero-chip">🎯 ${metDone}/${metTotal} targets</span>`);
   }
 
+  const colorHexD = (typeof PROJ_COLOR_HEX !== 'undefined') ? PROJ_COLOR_HEX : {};
+  const linkedProjsHTML = (g.linked_projects || []).length === 0 ? '' : `
+    <div class="divider" style="margin:10px 0 8px"></div>
+    <div style="display:flex;align-items:center;margin-bottom:6px">
+      <div class="detail-section-title" style="margin-bottom:0">Linked Projects</div>
+    </div>
+    <div id="d-g-linked-projects">
+      ${(g.linked_projects).map(p => {
+        const col = colorHexD[p.color] || 'var(--text-muted)';
+        const pct2 = p.progress || 0;
+        const statusChip = p.status === 'completed'
+          ? `<span style="font-size:11px;color:var(--neon-green)">Done</span>`
+          : p.is_at_risk
+            ? `<span style="font-size:11px;color:var(--neon-amber)">⚠ At risk</span>`
+            : `<span style="font-size:11px;color:var(--neon-green)">On track</span>`;
+        return `
+          <div class="d-g-linked-proj" data-proj-id="${p.id}" style="padding:6px 0;border-bottom:var(--border-subtle);cursor:pointer">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <span style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></span>
+              <span style="font-size:13px;color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.title)}</span>
+              ${statusChip}
+              <span style="font-size:13px;color:var(--text-muted);margin-left:4px">${pct2}%</span>
+            </div>
+            <div style="height:3px;background:var(--bg-hover);border-radius:2px;overflow:hidden;margin-left:14px">
+              <div style="height:100%;width:${pct2}%;background:${col};border-radius:2px;opacity:.8"></div>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+
   pane.innerHTML = `
     <div class="detail-panel">
       <div class="detail-header">
@@ -630,6 +682,8 @@ function renderGDetail(g) {
           </div>
           ${heroChips.length ? `<div class="d-g-hero-chips">${heroChips.join('')}</div>` : ''}
         </div>
+
+        ${linkedProjsHTML}
 
         <button class="goal-info-toggle" id="d-g-info-toggle">
           <span>General information</span>
@@ -720,6 +774,13 @@ function renderGDetail(g) {
     btn.addEventListener('click', () => {
       window._openNoteId = parseInt(btn.dataset.noteId);
       loadPage('notes');
+    });
+  });
+
+  pane.querySelectorAll('.d-g-linked-proj[data-proj-id]').forEach(el => {
+    el.addEventListener('click', () => {
+      window._openProjectId = parseInt(el.dataset.projId);
+      loadPage('projects');
     });
   });
 

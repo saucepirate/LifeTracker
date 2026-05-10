@@ -195,6 +195,11 @@ def update_trip(trip_id: int, body: TripUpdate):
     elif body.budget_total is not None:
         updates['budget_total'] = body.budget_total
 
+    if body.clear_project_id:
+        updates['project_id'] = None
+    elif body.project_id is not None:
+        updates['project_id'] = body.project_id
+
     if updates:
         set_clause = ', '.join(f"{k} = ?" for k in updates)
         conn.execute(f"UPDATE trips SET {set_clause} WHERE id = ?", (*updates.values(), trip_id))

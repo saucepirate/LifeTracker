@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 from datetime import date as _date, datetime, timedelta
 from calendar import monthrange
@@ -86,9 +86,10 @@ def _add_months(d, n):
     return d.replace(year=year, month=month, day=day)
 
 
-def _expand_recurring(master, range_start, range_end):
+def _expand_recurring(master, range_start, range_end, exceptions=None):
     """Generate concrete occurrences (as dicts with mutated date/end_date) within
     [range_start, range_end]. range_start/range_end are ISO strings."""
+    exc = exceptions or set()
     cadence  = master.get('recurrence_cadence')
     if not cadence:
         return [master]
@@ -110,6 +111,8 @@ def _expand_recurring(master, range_start, range_end):
             pass
 
     def emit(d):
+        if d.isoformat() in exc:
+            return
         e = dict(master)
         e['date'] = d.isoformat()
         if span_days > 0:
@@ -152,6 +155,14 @@ def _expand_recurring(master, range_start, range_end):
         while cur <= end:
             emit(cur)
             cur = _add_months(cur, interval)
+
+    elif cadence == 'yearly':
+        cur = base
+        while cur < rs:
+            cur = _add_months(cur, 12 * interval)
+        while cur <= end:
+            emit(cur)
+            cur = _add_months(cur, 12 * interval)
 
     return occurrences
 
@@ -199,12 +210,20 @@ def _get_range_data(conn, start: str, end: str):
             d = datetime.strptime(cur, '%Y-%m-%d') + timedelta(days=1)
             cur = d.strftime('%Y-%m-%d')
 
+    # Load exceptions for recurring events in this range
+    rec_ids = [dict(r)['id'] for r in event_rows if dict(r).get('recurrence_cadence')]
+    exc_map = {}
+    if rec_ids:
+        ph = ','.join('?' * len(rec_ids))
+        for ex in conn.execute(f"SELECT event_id, exception_date FROM event_exceptions WHERE event_id IN ({ph})", rec_ids).fetchall():
+            exc_map.setdefault(ex['event_id'], set()).add(ex['exception_date'])
+
     for row in event_rows:
         e = dict(row)
         e['all_day'] = bool(e['all_day'])
         if e.get('recurrence_cadence'):
             e['is_recurring'] = True
-            for occ in _expand_recurring(e, start, end):
+            for occ in _expand_recurring(e, start, end, exceptions=exc_map.get(e['id'])):
                 _place_event(occ)
         else:
             e['is_recurring'] = False
@@ -293,6 +312,131 @@ def _get_range_data(conn, start: str, end: str):
         if 'itinerary' not in days[d]:
             days[d]['itinerary'] = []
         days[d]['itinerary'].append(r)
+
+    # Project deadlines and milestones
+    try:
+        proj_rows = conn.execute(
+            """SELECT id, title, color, deadline FROM projects
+               WHERE deadline >= ? AND deadline <= ? AND status != 'cancelled'""",
+            (start, end)
+        ).fetchall()
+        for row in proj_rows:
+            r = dict(row)
+            d = r['deadline']
+            if d not in days:
+                days[d] = {'events': [], 'tasks': [], 'milestones': [], 'metrics': []}
+            if 'project_items' not in days[d]:
+                days[d]['project_items'] = []
+            days[d]['project_items'].append({
+                'item_type': 'deadline',
+                'project_id': r['id'],
+                'title': r['title'],
+                'color': r['color'],
+                'date': d,
+            })
+
+        pm_rows = conn.execute(
+            """SELECT pm.id, pm.project_id, pm.title, pm.due_date, pm.status,
+                      pm.is_deliverable, p.title as project_title, p.color
+               FROM project_milestones pm
+               JOIN projects p ON p.id = pm.project_id
+               WHERE pm.due_date >= ? AND pm.due_date <= ?
+                 AND p.status != 'cancelled'""",
+            (start, end)
+        ).fetchall()
+        for row in pm_rows:
+            r = dict(row)
+            r['is_deliverable'] = bool(r['is_deliverable'])
+            d = r['due_date']
+            if d not in days:
+                days[d] = {'events': [], 'tasks': [], 'milestones': [], 'metrics': []}
+            if 'project_items' not in days[d]:
+                days[d]['project_items'] = []
+            days[d]['project_items'].append({
+                'item_type': 'milestone',
+                'id': r['id'],
+                'project_id': r['project_id'],
+                'title': r['title'],
+                'project_title': r['project_title'],
+                'color': r['color'],
+                'status': r['status'],
+                'is_deliverable': r['is_deliverable'],
+                'date': d,
+            })
+
+        # Project tasks with due dates (INT-006/007)
+        pt_rows = conn.execute(
+            """SELECT pt.id, pt.project_id, pt.title, pt.due_date, pt.status,
+                      pt.priority, pt.assigned_to,
+                      p.title as project_title, p.color,
+                      pm2.title as milestone_title
+               FROM project_tasks pt
+               JOIN projects p ON p.id = pt.project_id
+               LEFT JOIN project_milestones pm2 ON pm2.id = pt.milestone_id
+               WHERE pt.due_date >= ? AND pt.due_date <= ?
+                 AND p.status != 'cancelled'
+                 AND pt.status NOT IN ('cancelled','skipped')
+               ORDER BY pt.due_date ASC""",
+            (start, end)
+        ).fetchall()
+        for row in pt_rows:
+            r = dict(row)
+            d = r['due_date']
+            if d not in days:
+                days[d] = {'events': [], 'tasks': [], 'milestones': [], 'metrics': []}
+            if 'project_items' not in days[d]:
+                days[d]['project_items'] = []
+            days[d]['project_items'].append({
+                'item_type': 'task',
+                'id': r['id'],
+                'project_id': r['project_id'],
+                'title': r['title'],
+                'project_title': r['project_title'],
+                'color': r['color'],
+                'status': r['status'],
+                'priority': r.get('priority'),
+                'milestone_title': r.get('milestone_title'),
+                'date': d,
+            })
+    except Exception:
+        pass
+
+    # Timed day plan items — shown in calendar as events
+    # Only items without cal_event_id (legacy linked items already appear via the events table)
+    try:
+        plan_rows = conn.execute(
+            """SELECT dpi.id, dpi.title, dpi.plan_date AS date, dpi.start_time, dpi.end_time,
+                      dpi.status,
+                      tg.name AS tag_name, tg.color AS tag_color
+               FROM day_plan_items dpi
+               LEFT JOIN tags tg ON tg.id = dpi.tag_id
+               WHERE dpi.plan_date >= ? AND dpi.plan_date <= ?
+                 AND dpi.start_time IS NOT NULL
+                 AND dpi.status != 'skipped'
+                 AND dpi.cal_event_id IS NULL""",
+            (start, end)
+        ).fetchall()
+        for row in plan_rows:
+            p = dict(row)
+            d = p['date']
+            if d not in days:
+                days[d] = {'events': [], 'tasks': [], 'milestones': [], 'metrics': []}
+            days[d]['events'].append({
+                'id': -(p['id']),
+                '_plan_item_id': p['id'],
+                '_source': 'plan',
+                'title': p['title'],
+                'date': d,
+                'all_day': False,
+                'start_time': p['start_time'],
+                'end_time': p['end_time'],
+                'tag_name': p.get('tag_name'),
+                'tag_color': p.get('tag_color'),
+                'is_done': p['status'] == 'done',
+                'is_recurring': False,
+            })
+    except Exception:
+        pass
 
     return days
 
@@ -430,11 +574,35 @@ def update_event(event_id: int, body: EventUpdate):
 
 
 @router.delete("/events/{event_id}", status_code=204)
-def delete_event(event_id: int):
+def delete_event(event_id: int,
+                 scope: str = Query('all'),
+                 occurrence_date: str = Query(None)):
     conn = database.get_connection()
-    if not conn.execute("SELECT id FROM events WHERE id = ?", (event_id,)).fetchone():
+    event = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+    if not event:
         conn.close()
         raise HTTPException(status_code=404, detail="Event not found.")
-    conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+    event = dict(event)
+
+    if scope == 'this' and occurrence_date:
+        # Exclude just this date from the recurrence
+        conn.execute(
+            "INSERT OR IGNORE INTO event_exceptions (event_id, exception_date) VALUES (?,?)",
+            (event_id, occurrence_date)
+        )
+    elif scope == 'future' and occurrence_date:
+        from datetime import date as _d, timedelta as _td
+        occ = _d.fromisoformat(occurrence_date)
+        master_start = _d.fromisoformat(event['date'])
+        if occ <= master_start:
+            # No past occurrences to preserve — delete the whole series
+            conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        else:
+            # Truncate recurrence to end the day before this occurrence
+            prev = (occ - _td(days=1)).isoformat()
+            conn.execute("UPDATE events SET recurrence_until = ? WHERE id = ?", (prev, event_id))
+    else:
+        conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+
     conn.commit()
     conn.close()

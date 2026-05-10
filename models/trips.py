@@ -31,6 +31,8 @@ class TripUpdate(BaseModel):
     budget_total: Optional[float] = None
     budget_currency: Optional[str] = None
     clear_budget_total: bool = False
+    project_id: Optional[int] = None
+    clear_project_id: bool = False
 
 
 class AttendeeCreate(BaseModel):

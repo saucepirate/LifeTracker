@@ -48,6 +48,21 @@ class PushToTemplateBody(BaseModel):
     template_id: int
 
 
+class PresetItemBody(BaseModel):
+    name: str
+    quantity: int = 1
+
+
+class PresetCategoryBody(BaseModel):
+    name: str
+    items: list
+
+
+class ApplyInlinePresetBody(BaseModel):
+    categories: list
+    merge: bool = True
+
+
 def _check_trip(conn, trip_id):
     if not conn.execute("SELECT id FROM trips WHERE id = ?", (trip_id,)).fetchone():
         raise HTTPException(status_code=404, detail="Trip not found.")
@@ -293,6 +308,55 @@ def apply_template(trip_id: int, body: ApplyTemplateBody):
             conn.execute(
                 "INSERT INTO packing_items (category_id, trip_id, name, quantity, sort_order) VALUES (?, ?, ?, ?, ?)",
                 (cat_id, trip_id, ti['name'], ti['quantity'], max_item + 1)
+            )
+
+    conn.commit()
+    result = _packing_full(conn, trip_id)
+    conn.close()
+    return result
+
+
+@router.post("/apply-inline-preset")
+def apply_inline_preset(trip_id: int, body: ApplyInlinePresetBody):
+    """Apply a client-side preset (list of category+items dicts) without a database template."""
+    conn = database.get_connection()
+    _check_trip(conn, trip_id)
+
+    if not body.merge:
+        conn.execute("DELETE FROM packing_categories WHERE trip_id = ?", (trip_id,))
+
+    for cat_data in body.categories:
+        cat_name = cat_data.get('name', '').strip()
+        if not cat_name:
+            continue
+        existing = conn.execute(
+            "SELECT id FROM packing_categories WHERE trip_id = ? AND name = ?",
+            (trip_id, cat_name)
+        ).fetchone()
+        if existing:
+            cat_id = existing['id']
+        else:
+            max_order = conn.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) FROM packing_categories WHERE trip_id = ?",
+                (trip_id,)
+            ).fetchone()[0]
+            c = conn.execute(
+                "INSERT INTO packing_categories (trip_id, name, sort_order) VALUES (?, ?, ?) RETURNING id",
+                (trip_id, cat_name, max_order + 1)
+            ).fetchone()
+            cat_id = c[0]
+
+        for item_data in (cat_data.get('items') or []):
+            item_name = item_data.get('name', '').strip()
+            if not item_name:
+                continue
+            qty = int(item_data.get('quantity', 1))
+            max_item = conn.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) FROM packing_items WHERE category_id = ?", (cat_id,)
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO packing_items (category_id, trip_id, name, quantity, sort_order) VALUES (?, ?, ?, ?, ?)",
+                (cat_id, trip_id, item_name, qty, max_item + 1)
             )
 
     conn.commit()

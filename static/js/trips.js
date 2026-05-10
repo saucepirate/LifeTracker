@@ -28,6 +28,13 @@ let _currentTab  = 'overview';
 // The page loader checks location.pathname so browser back/forward works automatically
 // via app.js's popstate → loadPage('trips') → this loader.
 registerPage('trips', async function(container) {
+  if (window._openTripId) {
+    const id = window._openTripId;
+    window._openTripId = null;
+    if (window._openTripTab) { _currentTab = window._openTripTab; window._openTripTab = null; }
+    await _loadWorkspace(container, id);
+    return;
+  }
   const m = location.pathname.match(/^\/trips\/(\d+)/);
   if (m) {
     await _loadWorkspace(container, parseInt(m[1]));
@@ -258,7 +265,7 @@ function _renderWorkspace(container, trip) {
     `<span class="trip-attendee-pill${a.is_me ? ' is-me' : ''}">${escHtml(a.name)}</span>`
   ).join('');
 
-  const TABS = ['Overview', 'Packing', 'Tasks', 'Budget', 'Itinerary', 'Notes'];
+  const TABS = ['Overview', 'Planning', 'Packing', 'Tasks', 'Budget', 'Itinerary', 'Notes'];
 
   container.innerHTML = `
     <div class="trip-workspace">
@@ -317,6 +324,7 @@ function _renderWorkspace(container, trip) {
 function _renderTab(tabContent, trip, tab) {
   switch (tab) {
     case 'overview':   _renderOverviewTab(tabContent, trip); break;
+    case 'planning':   _renderPlanningTab(tabContent, trip); break;
     case 'packing':    renderPackingTab(tabContent, trip);   break;
     case 'tasks':      _renderTasksTab(tabContent, trip);     break;
     case 'budget':     renderBudgetTab(tabContent, trip);    break;
@@ -384,12 +392,21 @@ async function _renderOverviewTab(tabContent, trip) {
       ${_confirmCardHTML(trip)}
       <div class="trip-itin-preview">
         <div class="trip-itin-preview-header">Upcoming (next 2 days)</div>
-        ${itinHTML || '<div style="padding:16px;font-size:13px;color:var(--text-muted)">No itinerary entries for the next 2 days.</div>'}
+        ${itinHTML || `<div style="padding:24px 16px;text-align:center">
+          <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">No itinerary entries for the next 2 days.</div>
+          <button class="btn btn-secondary btn-sm" id="trip-ov-add-itin">Add to Itinerary →</button>
+        </div>`}
       </div>
     </div>`;
 
   animateProgressBars(tabContent);
   _initConfirmCard(tabContent, trip);
+  tabContent.querySelector('#trip-ov-add-itin')?.addEventListener('click', () => {
+    _currentTab = 'itinerary';
+    const workspace = tabContent.closest('.trip-workspace');
+    workspace?.querySelectorAll('.trip-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'itinerary'));
+    renderItineraryTab(tabContent, trip);
+  });
 }
 
 function _confirmCardHTML(trip) {
@@ -518,6 +535,288 @@ function _itineraryPreviewHTML(entries) {
       </div>`;
   }
   return html;
+}
+
+// ── Planning tab ──────────────────────────────────────────────
+
+async function _renderPlanningTab(tabContent, trip) {
+  if (!trip.project_id) {
+    tabContent.innerHTML = `
+      <div class="trip-plan-setup">
+        <div class="trip-plan-setup-icon">📋</div>
+        <div class="trip-plan-setup-title">No planning project linked</div>
+        <div class="trip-plan-setup-desc">Link a project to track milestones, tasks, and a timeline for planning this trip.</div>
+        <div class="trip-plan-setup-actions">
+          <button class="btn btn-primary" id="trip-plan-create-btn">Create planning project</button>
+          <button class="btn btn-secondary" id="trip-plan-link-btn">Link existing project</button>
+        </div>
+      </div>`;
+    tabContent.querySelector('#trip-plan-create-btn').addEventListener('click', () =>
+      _openCreateTripProjectModal(tabContent, trip)
+    );
+    tabContent.querySelector('#trip-plan-link-btn').addEventListener('click', () =>
+      _openLinkTripProjectModal(tabContent, trip)
+    );
+    return;
+  }
+
+  tabContent.innerHTML = '<div class="loading-state" style="padding:40px 0">Loading project…</div>';
+  try {
+    _projectDetail = await apiFetch('GET', `/projects/${trip.project_id}`);
+  } catch(e) {
+    tabContent.innerHTML = `
+      <div class="trip-plan-setup">
+        <div class="trip-plan-setup-title">Failed to load project</div>
+        <div class="trip-plan-setup-desc">${escHtml(e.message)}</div>
+        <div class="trip-plan-setup-actions">
+          <button class="btn btn-secondary" id="trip-plan-unlink-btn">Unlink project</button>
+        </div>
+      </div>`;
+    tabContent.querySelector('#trip-plan-unlink-btn').addEventListener('click', () =>
+      _unlinkTripProject(tabContent, trip)
+    );
+    return;
+  }
+
+  _projDetailTab = 'overview';
+  _projShowCompleted = false;
+  _projOwnerFilter = 'all';
+  _projNotes = [];
+  _projGoals = [];
+  _projTrips = [];
+  _projNoteEditId = null;
+  _projNoteQuill = null;
+  clearTimeout(_projNoteSaveTimer);
+
+  tabContent.innerHTML = `
+    <div class="trip-plan-toolbar">
+      <button class="btn btn-ghost btn-sm" id="trip-plan-view-btn">View in Projects ↗</button>
+      <button class="btn btn-ghost btn-sm" id="trip-plan-unlink-btn">Unlink</button>
+    </div>
+    <div id="trip-plan-proj-container"></div>`;
+
+  const projContainer = tabContent.querySelector('#trip-plan-proj-container');
+  projContainer._tripContext = true;
+
+  tabContent.querySelector('#trip-plan-view-btn').addEventListener('click', () => {
+    window._openProjectId = trip.project_id;
+    loadPage('projects');
+  });
+
+  tabContent.querySelector('#trip-plan-unlink-btn').addEventListener('click', () =>
+    _unlinkTripProject(tabContent, trip)
+  );
+
+  _projRenderDetail(projContainer);
+}
+
+async function _unlinkTripProject(tabContent, trip) {
+  if (!confirm('Unlink this project from the trip? The project will remain in Projects.')) return;
+  try {
+    const updated = await apiFetch('PUT', `/trips/${trip.id}`, { clear_project_id: true });
+    Object.assign(trip, updated);
+    _currentTrip = trip;
+    await _renderPlanningTab(tabContent, trip);
+  } catch(e) { alert(e.message); }
+}
+
+function _openCreateTripProjectModal(tabContent, trip) {
+  const tripVariants = PROJ_TEMPLATES.filter(t => t.tripVariant);
+
+  // Auto-select template based on days until departure
+  const daysUntil = trip.start_date
+    ? Math.ceil((new Date(trip.start_date + 'T00:00:00') - new Date()) / 86400000)
+    : 90;
+  const autoId = daysUntil >= 300 ? 'trip_1year'
+               : daysUntil >= 150 ? 'trip_6month'
+               : daysUntil >= 60  ? 'trip_3month'
+               : daysUntil <= 4   ? 'trip_weekend'
+               : 'trip_1month';
+
+  let selectedTemplateId = autoId;
+  const activeFilters = { lead: 'any', dest: 'any', style: 'any' };
+
+  function _passesFilters(t) {
+    const leadOk  = activeFilters.lead  === 'any' || t.filterLead  === 'any' || t.filterLead  === activeFilters.lead;
+    const destOk  = activeFilters.dest  === 'any' || t.filterDestination === 'any' || t.filterDestination === activeFilters.dest;
+    const styleOk = activeFilters.style === 'any' || t.filterStyle === 'any' || t.filterStyle === activeFilters.style;
+    return leadOk && destOk && styleOk;
+  }
+
+  function _renderTmplGrid(gridEl) {
+    const filtered = tripVariants.filter(_passesFilters);
+    if (!filtered.length) {
+      gridEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:16px;font-size:13px">No templates match — try different filters.</div>';
+      return;
+    }
+    gridEl.innerHTML = filtered.map(t => `
+      <button type="button" class="tpm-tmpl-card${t.id === selectedTemplateId ? ' selected' : ''}" data-tmpl="${t.id}">
+        ${t.id === autoId ? '<span class="tpm-tmpl-badge">Recommended</span>' : ''}
+        <div class="tpm-tmpl-icon">${t.icon}</div>
+        <div class="tpm-tmpl-name">${escHtml(t.name)}</div>
+        <div class="tpm-tmpl-desc">${escHtml(t.description)}</div>
+        <div class="tpm-tmpl-meta">${t.milestones.length} milestones · ${t.tasks.length} tasks</div>
+      </button>`).join('');
+    gridEl.querySelectorAll('.tpm-tmpl-card').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedTemplateId = btn.dataset.tmpl;
+        gridEl.querySelectorAll('.tpm-tmpl-card').forEach(b => b.classList.toggle('selected', b === btn));
+      });
+    });
+  }
+
+  const body = `
+    <div class="form-group">
+      <label class="form-label">Project title *</label>
+      <input class="form-input" id="tpm-title" value="${escHtml(trip.name + ' — Planning')}" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <input class="form-input" id="tpm-desc" placeholder="Optional description…" />
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Start date</label>
+        <input class="form-input" id="tpm-start" type="date" value="${todayISO()}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Deadline (departure)</label>
+        <input class="form-input" id="tpm-deadline" type="date" value="${trip.start_date || ''}" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Choose template</label>
+      <div class="tpm-filters">
+        <div class="tpm-filter-group">
+          <span class="tpm-filter-label">Planning window</span>
+          <div class="tpm-chips" data-group="lead">
+            <button type="button" class="tpm-chip active" data-val="any">Any</button>
+            <button type="button" class="tpm-chip" data-val="1month">1 Month</button>
+            <button type="button" class="tpm-chip" data-val="3month">3 Months</button>
+            <button type="button" class="tpm-chip" data-val="6month">6 Months</button>
+            <button type="button" class="tpm-chip" data-val="1year">1 Year</button>
+          </div>
+        </div>
+        <div class="tpm-filter-group">
+          <span class="tpm-filter-label">Destination</span>
+          <div class="tpm-chips" data-group="dest">
+            <button type="button" class="tpm-chip active" data-val="any">Any</button>
+            <button type="button" class="tpm-chip" data-val="domestic">Domestic</button>
+            <button type="button" class="tpm-chip" data-val="international">International</button>
+          </div>
+        </div>
+        <div class="tpm-filter-group">
+          <span class="tpm-filter-label">Style</span>
+          <div class="tpm-chips" data-group="style">
+            <button type="button" class="tpm-chip active" data-val="any">Any</button>
+            <button type="button" class="tpm-chip" data-val="sightseeing">Sightseeing</button>
+            <button type="button" class="tpm-chip" data-val="relaxation">Relaxation</button>
+            <button type="button" class="tpm-chip" data-val="mixed">Mixed</button>
+          </div>
+        </div>
+      </div>
+      <div class="tpm-tmpl-grid" id="tpm-tmpl-grid"></div>
+    </div>`;
+
+  const overlay = createModal('Create Planning Project', body, async ov => {
+    const title = ov.querySelector('#tpm-title').value.trim();
+    if (!title) { alert('Title is required.'); return false; }
+    if (!selectedTemplateId) { alert('Select a template to continue.'); return false; }
+    const saveBtn = ov.querySelector('.modal-submit-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Creating…'; }
+    try {
+      const proj = await apiFetch('POST', '/projects/', {
+        title,
+        description: ov.querySelector('#tpm-desc').value.trim() || null,
+        start_date:  getDateVal(ov.querySelector('#tpm-start')) || null,
+        deadline:    getDateVal(ov.querySelector('#tpm-deadline')) || null,
+        status:      'active',
+        color:       'cyan',
+        trip_id:     trip.id,
+      });
+      const template = PROJ_TEMPLATES.find(t => t.id === selectedTemplateId);
+      if (template) await _projApplyTemplateToProject(proj, template);
+      const updated = await apiFetch('PUT', `/trips/${trip.id}`, { project_id: proj.id });
+      Object.assign(trip, updated);
+      _currentTrip = trip;
+      closeModal(ov);
+      ov.remove();
+      await _renderPlanningTab(tabContent, trip);
+    } catch(e) {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Create Project'; }
+      alert(e.message);
+    }
+    return false;
+  }, 'Create Project');
+
+  // Wire filter chips
+  const gridEl = overlay.querySelector('#tpm-tmpl-grid');
+  overlay.querySelectorAll('.tpm-chips').forEach(group => {
+    group.addEventListener('click', e => {
+      const btn = e.target.closest('.tpm-chip');
+      if (!btn) return;
+      const key = group.dataset.group;
+      group.querySelectorAll('.tpm-chip').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilters[key] = btn.dataset.val;
+      _renderTmplGrid(gridEl);
+    });
+  });
+
+  _renderTmplGrid(gridEl);
+  initSmartDates(overlay);
+  openModal(overlay);
+}
+
+async function _openLinkTripProjectModal(tabContent, trip) {
+  let projects;
+  try {
+    const data = await apiFetch('GET', '/projects/?status=active');
+    projects = data.items || [];
+  } catch(e) { alert(e.message); return; }
+
+  if (!projects.length) {
+    alert('No active projects found. Create a project first.');
+    return;
+  }
+
+  const listHTML = projects.map(p => `
+    <div class="trip-plan-proj-pick" data-id="${p.id}">
+      <span class="trip-plan-proj-pick-dot" style="background:${PROJ_COLOR_HEX[p.color] || 'var(--neon-cyan)'}"></span>
+      <span class="trip-plan-proj-pick-title">${escHtml(p.title)}</span>
+      ${p.deadline ? `<span class="trip-plan-proj-pick-date">${formatDateShort(p.deadline)}</span>` : ''}
+    </div>`).join('');
+
+  const body = `
+    <div class="form-group">
+      <label class="form-label">Select a project</label>
+      <div class="trip-plan-proj-list">${listHTML}</div>
+    </div>`;
+
+  let selectedId = null;
+  const overlay = createModal('Link Existing Project', body, async ov => {
+    if (!selectedId) { alert('Please select a project.'); return false; }
+    try {
+      const updated = await apiFetch('PUT', `/trips/${trip.id}`, { project_id: selectedId });
+      Object.assign(trip, updated);
+      _currentTrip = trip;
+      closeModal(ov);
+      ov.remove();
+      await _renderPlanningTab(tabContent, trip);
+    } catch(e) { alert(e.message); }
+    return false;
+  }, 'Link Project');
+
+  overlay.querySelector('.trip-plan-proj-list').addEventListener('click', e => {
+    const row = e.target.closest('.trip-plan-proj-pick');
+    if (!row) return;
+    selectedId = parseInt(row.dataset.id);
+    overlay.querySelectorAll('.trip-plan-proj-pick').forEach(r =>
+      r.classList.toggle('selected', r === row)
+    );
+  });
+
+  openModal(overlay);
 }
 
 // ── Tasks tab ─────────────────────────────────────────────────

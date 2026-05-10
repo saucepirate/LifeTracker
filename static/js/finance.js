@@ -56,6 +56,7 @@ registerPage('finance', async function(content) {
           <button class="fin-tab" data-view="wealth">Wealth</button>
           <button class="fin-tab" data-view="planning">Planning</button>
           <button class="fin-tab" data-view="manage">Manage</button>
+          <button class="fin-tab" data-view="investments">Investments</button>
         </div>
       </div>
       <div id="fin-content" class="finance-content"></div>
@@ -90,6 +91,7 @@ function _setFinView(v) {
   else if (v === 'wealth')       _renderFinWealth(c);
   else if (v === 'planning')     _renderFinPlanning(c);
   else if (v === 'manage')       _renderFinManage(c);
+  else if (v === 'investments')  _renderFinInvestments(c);
 }
 
 // ── Overview ─────────────────────────────────────────────────────────────────

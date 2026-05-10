@@ -329,6 +329,82 @@ function _openItemEditModal(container, trip, item) {
   openModal(overlay);
 }
 
+// ── Preset packing lists ────────────────────────────────────────
+
+const PACKING_PRESETS = [
+  {
+    id: 'weekend',
+    name: 'Weekend Getaway',
+    icon: '🚗',
+    categories: [
+      { name: 'Clothing', items: [{ name: 'Casual outfits (2-3 changes)', quantity: 1 }, { name: 'Underwear & socks', quantity: 3 }, { name: 'Sleepwear', quantity: 1 }, { name: 'Comfortable shoes', quantity: 1 }, { name: 'Light jacket or sweater', quantity: 1 }] },
+      { name: 'Toiletries', items: [{ name: 'Toothbrush & toothpaste', quantity: 1 }, { name: 'Deodorant', quantity: 1 }, { name: 'Shampoo & conditioner', quantity: 1 }, { name: 'Face wash & moisturizer', quantity: 1 }] },
+      { name: 'Electronics', items: [{ name: 'Phone charger', quantity: 1 }, { name: 'Earbuds or headphones', quantity: 1 }, { name: 'Portable battery pack', quantity: 1 }] },
+      { name: 'Essentials', items: [{ name: 'ID / passport', quantity: 1 }, { name: 'Wallet & cash', quantity: 1 }, { name: 'Keys', quantity: 1 }, { name: 'Medications', quantity: 1 }] },
+    ],
+  },
+  {
+    id: 'beach',
+    name: 'Beach & Resort',
+    icon: '🏖️',
+    categories: [
+      { name: 'Clothing', items: [{ name: 'Swimsuits', quantity: 2 }, { name: 'Cover-ups', quantity: 2 }, { name: 'Casual resort outfits', quantity: 4 }, { name: 'Flip flops / sandals', quantity: 1 }, { name: 'Evening outfit', quantity: 1 }, { name: 'Light cardigan', quantity: 1 }] },
+      { name: 'Beach Gear', items: [{ name: 'Sunscreen SPF 50+', quantity: 1 }, { name: 'Sunglasses', quantity: 1 }, { name: 'Beach towel', quantity: 1 }, { name: 'Hat / sun hat', quantity: 1 }, { name: 'Beach bag', quantity: 1 }, { name: 'Waterproof phone case', quantity: 1 }] },
+      { name: 'Toiletries', items: [{ name: 'After-sun lotion', quantity: 1 }, { name: 'Insect repellent', quantity: 1 }, { name: 'Travel toiletries kit', quantity: 1 }, { name: 'Razor', quantity: 1 }] },
+      { name: 'Electronics', items: [{ name: 'Phone charger', quantity: 1 }, { name: 'Camera & memory cards', quantity: 1 }, { name: 'Waterproof speaker', quantity: 1 }] },
+      { name: 'Essentials', items: [{ name: 'Passport / ID', quantity: 1 }, { name: 'Travel insurance documents', quantity: 1 }, { name: 'Wallet & cards', quantity: 1 }, { name: 'Medications', quantity: 1 }] },
+    ],
+  },
+  {
+    id: 'sightseeing',
+    name: 'City & Sightseeing',
+    icon: '🏛️',
+    categories: [
+      { name: 'Clothing', items: [{ name: 'Comfortable walking outfits', quantity: 4 }, { name: 'Smart casual dinner outfit', quantity: 1 }, { name: 'Comfortable walking shoes', quantity: 1 }, { name: 'Layers / light jacket', quantity: 1 }, { name: 'Rain jacket or compact umbrella', quantity: 1 }] },
+      { name: 'Day Bag Essentials', items: [{ name: 'Daypack / small backpack', quantity: 1 }, { name: 'Reusable water bottle', quantity: 1 }, { name: 'Snacks for sightseeing', quantity: 1 }, { name: 'Portable battery pack', quantity: 1 }, { name: 'City map or guidebook', quantity: 1 }] },
+      { name: 'Toiletries', items: [{ name: 'Travel toiletries kit', quantity: 1 }, { name: 'Blister pads / moleskin', quantity: 1 }, { name: 'Hand sanitizer', quantity: 1 }, { name: 'Sunscreen', quantity: 1 }] },
+      { name: 'Electronics', items: [{ name: 'Phone charger', quantity: 1 }, { name: 'Camera', quantity: 1 }, { name: 'Universal power adapter', quantity: 1 }, { name: 'Earbuds', quantity: 1 }] },
+      { name: 'Documents', items: [{ name: 'Passport / ID', quantity: 1 }, { name: 'Museum passes / tickets', quantity: 1 }, { name: 'Hotel confirmation', quantity: 1 }, { name: 'Travel insurance card', quantity: 1 }] },
+    ],
+  },
+  {
+    id: 'international',
+    name: 'International Travel',
+    icon: '🌍',
+    categories: [
+      { name: 'Clothing', items: [{ name: 'Versatile mix-and-match outfits', quantity: 5 }, { name: 'Underwear & socks', quantity: 7 }, { name: 'Sleepwear', quantity: 2 }, { name: 'Comfortable walking shoes', quantity: 1 }, { name: 'Dressier shoes', quantity: 1 }, { name: 'Light jacket / layers', quantity: 2 }, { name: 'Swimsuit (if applicable)', quantity: 1 }] },
+      { name: 'Documents & Money', items: [{ name: 'Passport (6+ months validity)', quantity: 1 }, { name: 'Visa documents', quantity: 1 }, { name: 'Travel insurance policy', quantity: 1 }, { name: 'Flight & hotel confirmations', quantity: 1 }, { name: 'Local currency / travel card', quantity: 1 }, { name: 'Emergency contact sheet', quantity: 1 }, { name: 'Vaccination records', quantity: 1 }] },
+      { name: 'Toiletries', items: [{ name: 'Travel-size toiletries kit', quantity: 1 }, { name: 'Prescription medications (extra supply)', quantity: 1 }, { name: 'Anti-diarrhea & stomach meds', quantity: 1 }, { name: 'Insect repellent', quantity: 1 }, { name: 'Sunscreen', quantity: 1 }] },
+      { name: 'Electronics', items: [{ name: 'Phone charger', quantity: 1 }, { name: 'Universal power adapter', quantity: 1 }, { name: 'Portable battery pack', quantity: 1 }, { name: 'Camera', quantity: 1 }, { name: 'Earbuds / noise-cancelling headphones', quantity: 1 }] },
+      { name: 'Comfort & Travel', items: [{ name: 'Neck pillow', quantity: 1 }, { name: 'Eye mask & earplugs', quantity: 1 }, { name: 'Compression socks', quantity: 2 }, { name: 'Reusable water bottle', quantity: 1 }, { name: 'Snacks for the flight', quantity: 1 }, { name: 'Luggage lock', quantity: 1 }] },
+    ],
+  },
+  {
+    id: 'hiking',
+    name: 'Hiking & Adventure',
+    icon: '🥾',
+    categories: [
+      { name: 'Clothing', items: [{ name: 'Moisture-wicking base layers', quantity: 3 }, { name: 'Hiking pants / shorts', quantity: 2 }, { name: 'Fleece or mid-layer', quantity: 1 }, { name: 'Waterproof outer jacket', quantity: 1 }, { name: 'Hiking boots (broken in)', quantity: 1 }, { name: 'Wool hiking socks', quantity: 4 }, { name: 'Hat & gloves', quantity: 1 }] },
+      { name: 'Gear', items: [{ name: 'Hiking backpack', quantity: 1 }, { name: 'Trekking poles', quantity: 1 }, { name: 'Headlamp & extra batteries', quantity: 1 }, { name: 'Map / trail guide', quantity: 1 }, { name: 'Compass', quantity: 1 }, { name: 'Reusable water bottles', quantity: 2 }, { name: 'Water filter / purification tabs', quantity: 1 }] },
+      { name: 'Safety & First Aid', items: [{ name: 'First aid kit', quantity: 1 }, { name: 'Blister pads', quantity: 1 }, { name: 'Sunscreen SPF 50+', quantity: 1 }, { name: 'Insect repellent', quantity: 1 }, { name: 'Emergency whistle', quantity: 1 }, { name: 'Emergency bivvy / space blanket', quantity: 1 }] },
+      { name: 'Food & Nutrition', items: [{ name: 'Trail mix / energy bars', quantity: 1 }, { name: 'Electrolyte packets', quantity: 1 }, { name: 'Lightweight camp meals', quantity: 1 }] },
+      { name: 'Essentials', items: [{ name: 'ID / emergency card', quantity: 1 }, { name: 'Travel insurance documents', quantity: 1 }, { name: 'Phone charger & solar charger', quantity: 1 }, { name: 'Offline maps downloaded', quantity: 1 }] },
+    ],
+  },
+  {
+    id: 'business',
+    name: 'Business Trip',
+    icon: '💼',
+    categories: [
+      { name: 'Professional Attire', items: [{ name: 'Business outfits', quantity: 3 }, { name: 'Dress shoes', quantity: 1 }, { name: 'Smart casual options', quantity: 2 }, { name: 'Ties / accessories', quantity: 1 }, { name: 'Travel iron or steamer', quantity: 1 }] },
+      { name: 'Work Essentials', items: [{ name: 'Laptop & charger', quantity: 1 }, { name: 'Laptop bag / briefcase', quantity: 1 }, { name: 'Business cards', quantity: 1 }, { name: 'Notebook & pens', quantity: 1 }, { name: 'USB drive', quantity: 1 }, { name: 'Presentation materials', quantity: 1 }] },
+      { name: 'Electronics', items: [{ name: 'Phone charger', quantity: 1 }, { name: 'Portable battery pack', quantity: 1 }, { name: 'Earbuds for calls', quantity: 1 }, { name: 'Power strip', quantity: 1 }] },
+      { name: 'Toiletries', items: [{ name: 'Travel toiletries kit', quantity: 1 }, { name: 'Grooming kit', quantity: 1 }] },
+      { name: 'Documents', items: [{ name: 'Passport / ID', quantity: 1 }, { name: 'Company travel documents', quantity: 1 }, { name: 'Hotel & flight confirmations', quantity: 1 }, { name: 'Expense receipts folder', quantity: 1 }] },
+    ],
+  },
+];
+
 // ── Templates dropdown ─────────────────────────────────────────
 
 async function _fillTemplatesDropdown(dd, container, trip) {
@@ -343,16 +419,32 @@ async function _fillTemplatesDropdown(dd, container, trip) {
   }
 
   dd.innerHTML = `
-    <div class="pack-dd-section">Apply to this trip</div>
+    <div class="pack-dd-section">Preset lists</div>
+    ${PACKING_PRESETS.map(p => `
+      <button class="pack-dd-item pack-apply-preset" data-preset-id="${p.id}">
+        <span class="pack-dd-preset-icon">${p.icon}</span>
+        ${escHtml(p.name)}
+        <span class="pack-dd-meta">${p.categories.length} categories</span>
+      </button>`).join('')}
+    <div class="pack-dd-sep"></div>
+    <div class="pack-dd-section">Saved templates</div>
     ${templates.length ? templates.map(t => `
       <button class="pack-dd-item pack-apply-tmpl" data-id="${t.id}">
         ${escHtml(t.name)}
         <span class="pack-dd-meta">${t.category_count} cats · ${t.item_count} items</span>
-      </button>`).join('') : '<div class="pack-dd-empty">No templates yet</div>'}
+      </button>`).join('') : '<div class="pack-dd-empty">No saved templates yet</div>'}
     <div class="pack-dd-sep"></div>
     <button class="pack-dd-item" id="pack-dd-save">Save list as template…</button>
     <button class="pack-dd-item" id="pack-dd-manage">Manage templates →</button>
   `;
+
+  dd.querySelectorAll('.pack-apply-preset').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      dd.hidden = true;
+      const preset = PACKING_PRESETS.find(p => p.id === btn.dataset.presetId);
+      if (preset) await _applyPreset(container, trip, preset);
+    });
+  });
 
   dd.querySelectorAll('.pack-apply-tmpl').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -370,6 +462,21 @@ async function _fillTemplatesDropdown(dd, container, trip) {
     dd.hidden = true;
     loadPage('packing-templates');
   });
+}
+
+async function _applyPreset(container, trip, preset) {
+  const merge = confirm(
+    `Apply "${preset.name}" packing list?\n\n` +
+    'OK = merge (add missing items to existing categories)\n' +
+    'Cancel = replace (clear list first, then apply preset)'
+  );
+  try {
+    _packData = await apiFetch('POST', `/trips/${trip.id}/packing/apply-inline-preset`, {
+      categories: preset.categories,
+      merge,
+    });
+    _renderPacking(container);
+  } catch (e) { alert(e.message); }
 }
 
 async function _doApplyTemplate(container, trip, tmplId) {

@@ -99,12 +99,20 @@ registerPage('dashboard', async function(content) {
           <div class="dash-qp-body" id="dash-goalms-list"></div>
         </div>
       </div>
+      <div class="dash-qp" id="dash-qp-projects" style="margin-top:12px">
+        <div class="dash-qp-header">
+          <span class="dash-section-title">Active Projects</span>
+          <span class="dash-section-link" id="dash-projects-nav">View all →</span>
+        </div>
+        <div class="dash-qp-body" id="dash-projects-list"></div>
+      </div>
     </div>`;
 
-  document.getElementById('dash-tasks-nav')?.addEventListener('click', () => loadPage('tasks'));
-  document.getElementById('dash-habits-nav')?.addEventListener('click', () => loadPage('goals'));
-  document.getElementById('dash-goals-nav')?.addEventListener('click', () => loadPage('goals'));
-  document.getElementById('dash-cal-nav')?.addEventListener('click',   () => loadPage('calendar'));
+  document.getElementById('dash-tasks-nav')?.addEventListener('click',    () => loadPage('tasks'));
+  document.getElementById('dash-habits-nav')?.addEventListener('click',   () => loadPage('goals'));
+  document.getElementById('dash-goals-nav')?.addEventListener('click',    () => loadPage('goals'));
+  document.getElementById('dash-cal-nav')?.addEventListener('click',      () => loadPage('calendar'));
+  document.getElementById('dash-projects-nav')?.addEventListener('click', () => loadPage('projects'));
   document.getElementById('dash-mode-toggle')?.addEventListener('click', () => {
     _setTLMode(_tlMode === 'tasks' ? 'activity' : 'tasks');
   });
@@ -124,6 +132,7 @@ registerPage('dashboard', async function(content) {
   _renderHabits(_dashData.habits);
   _renderGoalsAndMilestones(_dashData.goals);
   _renderMiniCalendar(_dashData);
+  _renderProjects(_dashData.active_projects);
   _wireQuickAdd();
   _renderTripSelector();
   _setTLMode(_tlMode);
@@ -164,6 +173,7 @@ async function _dashReload() {
     _renderHabits(_dashData.habits);
     _renderGoalsAndMilestones(_dashData.goals);
     _renderMiniCalendar(_dashData);
+    _renderProjects(_dashData.active_projects);
     if (_tlMode === 'activity') _renderActivityChart(_dashData);
   } catch(e) {}
 }
@@ -424,10 +434,15 @@ function _renderKPIs(data) {
   el.innerHTML = slots.join('');
 
   el.querySelectorAll('[data-stat]').forEach(cell => {
+    cell.style.cursor = 'pointer';
     cell.addEventListener('click', () => {
       const s = cell.dataset.stat;
-      if      (s === 'today')  document.getElementById('dash-qp-tasks')?.scrollIntoView({ behavior: 'smooth' });
-      else if (s === 'habits') document.getElementById('dash-qp-habits')?.scrollIntoView({ behavior: 'smooth' });
+      if (s === 'today') {
+        window._tasksInitFilter = 'today';
+        loadPage('tasks');
+      } else if (s === 'habits') {
+        loadPage('goals');
+      }
     });
   });
 
@@ -605,7 +620,11 @@ async function _renderTripSelector() {
   document.getElementById('dash-tr-select').addEventListener('change', e => {
     _showTripStats(allTrips, parseInt(e.target.value));
   });
-  el.querySelector('.dash-tr-open').addEventListener('click', () => loadPage('trips'));
+  el.querySelector('.dash-tr-open').addEventListener('click', () => {
+    const selId = parseInt(document.getElementById('dash-tr-select')?.value);
+    if (selId) window._openTripId = selId;
+    loadPage('trips');
+  });
 }
 
 function _showTripStats(trips, tripId) {
@@ -653,20 +672,28 @@ function _showTripStats(trips, tripId) {
     dateRange     ? `<span class="dash-tr-stat"><span class="dash-tr-stat-val dash-tr-dates">${dateRange}</span></span>` : '',
     `<span class="dash-tr-stat dash-tr-stat--days"><span class="dash-tr-stat-val">${daysLbl}</span></span>`,
     packPct !== null
-      ? `<span class="dash-tr-stat"><span class="dash-tr-stat-lbl">Packing</span>
+      ? `<span class="dash-tr-stat dash-tr-stat--clickable" data-trip-id="${tripId}" data-trip-tab="packing" style="cursor:pointer"><span class="dash-tr-stat-lbl">Packing</span>
          <div class="dash-tr-mini-bar"><div style="width:${packPct}%"></div></div>
          <span class="dash-tr-stat-val">${packPct}%</span></span>`
       : '',
     t.total_task_count > 0
-      ? `<span class="dash-tr-stat"><span class="dash-tr-stat-lbl">Tasks</span><span class="dash-tr-stat-val">${taskDone}/${t.total_task_count}</span></span>`
+      ? `<span class="dash-tr-stat dash-tr-stat--clickable" data-trip-id="${tripId}" data-trip-tab="tasks" style="cursor:pointer"><span class="dash-tr-stat-lbl">Tasks</span><span class="dash-tr-stat-val">${taskDone}/${t.total_task_count}</span></span>`
       : '',
     budgetPct !== null
-      ? `<span class="dash-tr-stat"><span class="dash-tr-stat-lbl">Budget</span>
+      ? `<span class="dash-tr-stat dash-tr-stat--clickable" data-trip-id="${tripId}" data-trip-tab="budget" style="cursor:pointer"><span class="dash-tr-stat-lbl">Budget</span>
          <div class="dash-tr-mini-bar dash-tr-mini-bar--budget"><div style="width:${budgetPct}%;background:${budgetPct > 90 ? '#ff4455' : '#FFB800'}"></div></div>
          <span class="dash-tr-stat-val">$${Math.round(budgetUsed)}/$${Math.round(budgetTotal)}</span></span>`
       : '',
     itineraryHTML,
   ].filter(Boolean).join('<span class="dash-tr-sep">·</span>');
+
+  statsEl.querySelectorAll('.dash-tr-stat--clickable').forEach(chip => {
+    chip.addEventListener('click', () => {
+      window._openTripId  = parseInt(chip.dataset.tripId);
+      window._openTripTab = chip.dataset.tripTab;
+      loadPage('trips');
+    });
+  });
 }
 
 // ── Quick-add wiring ──────────────────────────────────────────
@@ -920,6 +947,69 @@ function _renderGoalsAndMilestones(goals) {
         row.style.cssText = 'opacity:0;transition:opacity 0.18s';
         setTimeout(() => row.remove(), 200);
       } catch(err) { btn.classList.remove('checked'); }
+    });
+  });
+}
+
+// ── Active Projects panel (INT-011–016) ──────────────────────
+function _projDashHealth(p, today) {
+  if (p.progress === 100) return `<span class="proj-health-badge proj-health-complete">Complete</span>`;
+  if (p.deadline && p.deadline < today) return `<span class="proj-health-badge proj-health-overdue">Overdue</span>`;
+  if (p.overdue_tasks >= 2) return `<span class="proj-health-badge proj-health-atrisk">At risk</span>`;
+  const nm = p.next_milestone;
+  if (nm && nm.due_date && nm.due_date < today) return `<span class="proj-health-badge proj-health-atrisk">At risk</span>`;
+  return `<span class="proj-health-badge proj-health-ontrack">On track</span>`;
+}
+
+function _renderProjects(projects) {
+  const el = document.getElementById('dash-projects-list');
+  if (!el) return;
+
+  const panel = document.getElementById('dash-qp-projects');
+  if (!projects || !projects.length) {
+    if (panel) panel.style.display = 'none';
+    el.innerHTML = `<div class="di-empty">No active projects</div>`;
+    return;
+  }
+  if (panel) panel.style.display = '';
+
+  const today = todayISO();
+  const COLOR_HEX = (typeof PROJ_COLOR_HEX !== 'undefined') ? PROJ_COLOR_HEX : {};
+
+  el.innerHTML = projects.slice(0, 10).map(p => {
+    const color = COLOR_HEX[p.color] || 'var(--neon-cyan)';
+    const healthBadge = _projDashHealth(p, today);
+    const sub = p.next_action
+      ? escHtml(p.next_action.slice(0, 48) + (p.next_action.length > 48 ? '…' : ''))
+      : p.next_milestone
+        ? '↗ ' + escHtml(p.next_milestone.title.slice(0, 44) + (p.next_milestone.title.length > 44 ? '…' : ''))
+        : '';
+    const overdueWarn = p.overdue_tasks > 0
+      ? `<span class="dash-proj-overdue-badge">${p.overdue_tasks} overdue</span>` : '';
+    return `
+      <div class="dash-proj-row" data-id="${p.id}">
+        <div class="dash-proj-row-left">
+          <div class="dash-proj-color-bar" style="background:${color}"></div>
+          <div class="dash-proj-info">
+            <div class="dash-proj-name">${escHtml(p.title)}</div>
+            ${sub ? `<div class="dash-proj-sub">${sub}</div>` : ''}
+          </div>
+        </div>
+        <div class="dash-proj-row-right">
+          ${overdueWarn}
+          ${healthBadge}
+          <div class="dash-proj-progress">
+            <div class="dash-proj-bar"><div class="dash-proj-fill" style="width:${p.progress}%;background:${color}"></div></div>
+            <span class="dash-proj-pct">${p.progress}%</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.querySelectorAll('.dash-proj-row').forEach(row => {
+    row.addEventListener('click', () => {
+      window._openProjectId = parseInt(row.dataset.id);
+      loadPage('projects');
     });
   });
 }

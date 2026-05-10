@@ -13,7 +13,9 @@ let _calWeekEnd = null;
 let _calFilters = { events: true, tasks: true, milestones: true, metrics: true, hideRecurring: true };
 let _calGoals = [];
 let _calTrips = [];
+let _calProjects = [];
 let _calTripId = null;
+let _calProjectId = null;
 let _calDayDate = null;
 
 const CAL_HOUR_START = 7;
@@ -62,6 +64,9 @@ registerPage('calendar', async function(content) {
           <span class="cal-filter-sep"></span>
           <select id="cal-trip-filter" class="form-select" style="font-size:13px;padding:4px 8px;height:auto;width:auto;min-width:110px">
             <option value="">All trips</option>
+          </select>
+          <select id="cal-project-filter" class="form-select" style="font-size:13px;padding:4px 8px;height:auto;width:auto;min-width:110px">
+            <option value="">All projects</option>
           </select>
           <span style="flex:1"></span>
           <span class="cal-legend">
@@ -127,24 +132,27 @@ registerPage('calendar', async function(content) {
 // ── Meta ─────────────────────────────────────────────────────────────────────
 async function calLoadMeta() {
   try {
-    const [notes, tasks, goals, trips, tags] = await Promise.all([
+    const [notes, tasks, goals, trips, tags, projs] = await Promise.all([
       apiFetch('GET', '/notes'),
       apiFetch('GET', '/tasks?status=pending'),
       apiFetch('GET', '/goals'),
       apiFetch('GET', '/trips').catch(() => ({ upcoming: [], planning: [], past: [] })),
       apiFetch('GET', '/tags').catch(() => ({ items: [] })),
+      apiFetch('GET', '/projects/?status=active').catch(() => ({ items: [] })),
     ]);
-    _calNotes = Array.isArray(notes) ? notes : (notes.items || []);
-    _calTasks = Array.isArray(tasks) ? tasks : (tasks.items || []);
-    _calGoals = Array.isArray(goals) ? goals : (goals.items || []);
-    _calTrips = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
-    _calTags  = Array.isArray(tags)  ? tags  : (tags.items  || []);
+    _calNotes    = Array.isArray(notes) ? notes : (notes.items || []);
+    _calTasks    = Array.isArray(tasks) ? tasks : (tasks.items || []);
+    _calGoals    = Array.isArray(goals) ? goals : (goals.items || []);
+    _calTrips    = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
+    _calTags     = Array.isArray(tags)  ? tags  : (tags.items  || []);
+    _calProjects = projs.items || [];
   } catch(e) {
-    _calNotes = [];
-    _calTasks = [];
-    _calGoals = [];
-    _calTrips = [];
-    _calTags  = [];
+    _calNotes    = [];
+    _calTasks    = [];
+    _calGoals    = [];
+    _calTrips    = [];
+    _calTags     = [];
+    _calProjects = [];
   }
   // Populate trip dropdown
   const sel = document.getElementById('cal-trip-filter');
@@ -158,6 +166,21 @@ async function calLoadMeta() {
     });
     sel.addEventListener('change', e => {
       _calTripId = parseInt(e.target.value) || null;
+      calRerender();
+    });
+  }
+  // Populate project dropdown
+  const projSel = document.getElementById('cal-project-filter');
+  if (projSel && _calProjects.length) {
+    _calProjects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.title;
+      if (_calProjectId === p.id) opt.selected = true;
+      projSel.appendChild(opt);
+    });
+    projSel.addEventListener('change', e => {
+      _calProjectId = parseInt(e.target.value) || null;
       calRerender();
     });
   }
@@ -285,6 +308,7 @@ function renderMonthGrid(gridStart, gridEnd) {
       ...(dayData.tasks || []).map(t => ({ type: 'task', obj: t })),
       ...(dayData.milestones || []).map(m => ({ type: 'milestone', obj: m })),
       ...(dayData.metrics || []).map(m => ({ type: 'metric', obj: m })),
+      ...(dayData.project_items || []).map(pi => ({ type: 'project_item', obj: pi })),
     ];
     const visibleItems = allItems.filter(item => {
       if (item.type === 'event' && !_calFilters.events) return false;
@@ -301,6 +325,8 @@ function renderMonthGrid(gridStart, gridEnd) {
       }
       if (item.type === 'milestone' && !_calFilters.milestones) return false;
       if (item.type === 'metric' && !_calFilters.metrics) return false;
+      if (_calProjectId && item.type === 'project_item' && item.obj.project_id !== _calProjectId) return false;
+      if (_calProjectId && item.type !== 'project_item') return false;
       return true;
     });
     const maxPills = 3;
@@ -335,6 +361,18 @@ function renderMonthGrid(gridStart, gridEnd) {
         else pillClass += iso < today ? ' pill-task-high' : ' pill-task';
       }
       else if (item.type === 'milestone') pillClass += ' pill-milestone';
+      else if (item.type === 'project_item') {
+        const pi = item.obj;
+        if (pi.item_type === 'deadline') {
+          pillClass += ' pill-proj-deadline';
+          pillBody = `🚩 ${esc(pi.title)}`;
+          tip = `${pi.title} — project deadline`;
+        } else {
+          pillClass += ' pill-proj-milestone';
+          pillBody = `${pi.is_deliverable ? '📦 ' : '◆ '}${esc(pi.title)}`;
+          tip = `${pi.title} — ${pi.is_deliverable ? 'deliverable' : 'milestone'} (${pi.project_title})`;
+        }
+      }
       else pillClass += ' pill-metric';
 
       pillsHtml += `<div class="${pillClass}" title="${esc(tip)}">${pillBody}</div>`;
@@ -399,6 +437,9 @@ function openDayPanel(dateStr) {
     : [];
   const milestones = _calFilters.milestones ? (dayData.milestones || []) : [];
   const metrics = _calFilters.metrics ? (dayData.metrics || []) : [];
+  const projectItems = (dayData.project_items || []).filter(pi =>
+    !_calProjectId || pi.project_id === _calProjectId
+  );
 
   let evHtml = '';
   if (events.length) {
@@ -504,6 +545,31 @@ function openDayPanel(dateStr) {
           <div class="cal-section-label">Milestones &amp; Targets</div>
           ${goalHtml || '<div class="cal-panel-empty">No milestones or targets</div>'}
         </div>
+        ${projectItems.length ? `
+        <div class="cal-panel-col">
+          <div class="cal-section-label">Projects</div>
+          ${projectItems.map(item => {
+            const colorVar = {'cyan':'var(--neon-cyan)','green':'var(--neon-green)','amber':'var(--neon-amber)','red':'var(--neon-red)','purple':'var(--neon-purple)','blue':'#4D9FFF','pink':'#FF6090','teal':'#1DE9B6'}[item.color] || 'var(--neon-cyan)';
+            if (item.item_type === 'deadline') {
+              return `<div class="cal-goal-row" style="border-left:3px solid ${colorVar};padding-left:8px">
+                <div style="flex:1;min-width:0">
+                  <div class="cal-goal-title" style="font-weight:600">🚩 ${esc(item.title)}</div>
+                  <div class="cal-goal-sub" style="color:var(--neon-red)">Project deadline</div>
+                </div>
+                <button class="cal-goal-nav-btn" onclick="loadPage('projects')" title="Go to projects" style="background:none;border:none;padding:2px 8px;font-size:14px;color:var(--color-accent);opacity:.65;cursor:pointer">→</button>
+              </div>`;
+            } else {
+              const done = item.status === 'completed';
+              return `<div class="cal-goal-row" style="border-left:3px solid ${colorVar};padding-left:8px">
+                <div style="flex:1;min-width:0">
+                  <div class="cal-goal-title${done?' cal-done':''}">${item.is_deliverable ? '📦 ' : '◆ '}${esc(item.title)}</div>
+                  <div class="cal-goal-sub"><span class="badge-milestone">${item.is_deliverable ? 'Deliverable' : 'Milestone'}</span> <span style="color:var(--text-muted);font-size:11px">${esc(item.project_title)}</span></div>
+                </div>
+                <button class="cal-goal-nav-btn" onclick="loadPage('projects')" title="Go to projects" style="background:none;border:none;padding:2px 8px;font-size:14px;color:var(--color-accent);opacity:.65;cursor:pointer">→</button>
+              </div>`;
+            }
+          }).join('')}
+        </div>` : ''}
       </div>
     </div>`;
 
@@ -533,19 +599,25 @@ function openDayPanel(dateStr) {
     const evId = parseInt(btn.dataset.eventId);
     btn.addEventListener('click', () => {
       const ev = ((_calData[dateStr] || {}).events || []).find(e => e.id === evId);
-      if (ev) openEventModal(dateStr, null, ev);
+      if (!ev) return;
+      if (ev._source === 'plan') {
+        window._dayOpenDate = ev.date;
+        loadPage('day');
+        return;
+      }
+      openEventModal(dateStr, null, ev);
     });
   });
 
   pane.querySelectorAll('.cal-del-event-btn').forEach(btn => {
     const evId = parseInt(btn.dataset.eventId);
-    btn.addEventListener('click', async () => {
-      if (!confirm('Delete this event?')) return;
-      await apiFetch('DELETE', `/calendar/events/${evId}`);
-      calRemoveEventFromData(evId);
-      openDayPanel(dateStr);
-      if (_calView === 'month') renderMonthGrid(null, null, true);
-      else calLoadAndRender();
+    btn.addEventListener('click', () => {
+      const ev = ((_calData[dateStr] || {}).events || []).find(e => e.id === evId);
+      if (!ev) return;
+      _calDeleteEvent(ev, async () => {
+        await calLoadAndRender();
+        openDayPanel(dateStr);
+      });
     });
   });
 
@@ -727,15 +799,21 @@ function renderDayView(dateStr) {
     const evId = parseInt(btn.dataset.eventId);
     btn.addEventListener('click', () => {
       const ev = ((_calData[dateStr] || {}).events || []).find(e => e.id === evId);
-      if (ev) openEventModal(dateStr, null, ev);
+      if (!ev) return;
+      if (ev._source === 'plan') {
+        window._dayOpenDate = ev.date;
+        loadPage('day');
+        return;
+      }
+      openEventModal(dateStr, null, ev);
     });
   });
   container.querySelectorAll('.cal-del-event-btn').forEach(btn => {
     const evId = parseInt(btn.dataset.eventId);
-    btn.addEventListener('click', async () => {
-      if (!confirm('Delete this event?')) return;
-      await apiFetch('DELETE', `/calendar/events/${evId}`);
-      await calLoadAndRender();
+    btn.addEventListener('click', () => {
+      const ev = ((_calData[dateStr] || {}).events || []).find(e => e.id === evId);
+      if (!ev) return;
+      _calDeleteEvent(ev, () => calLoadAndRender());
     });
   });
   container.querySelectorAll('.checkbox-circle').forEach(btn => {
@@ -800,6 +878,7 @@ function renderWeekGrid(weekStart, weekEnd) {
             if (!full?.tags?.some(tg => tg.id === trip.tag_id)) return false;
           }
         }
+        if (_calProjectId) return false;
       }
       if (item.type === 'milestone' && !_calFilters.milestones) return false;
       if (item.type === 'metric' && !_calFilters.metrics) return false;
@@ -923,7 +1002,9 @@ function renderWeekGrid(weekStart, weekEnd) {
         const evId = parseInt(el.dataset.eventId);
         const iso = el.dataset.date;
         const ev = ((_calData[iso] || {}).events || []).find(e => e.id === evId);
-        if (ev) openEventModal(iso, null, ev);
+        if (!ev) return;
+        if (ev._source === 'plan') { window._dayOpenDate = ev.date; loadPage('day'); return; }
+        openEventModal(iso, null, ev);
       });
     });
     container.querySelectorAll('.cal-timed-edit-btn').forEach(btn => {
@@ -932,17 +1013,19 @@ function renderWeekGrid(weekStart, weekEnd) {
         const evId = parseInt(btn.dataset.eventId);
         const iso = btn.dataset.date;
         const ev = ((_calData[iso] || {}).events || []).find(e => e.id === evId);
-        if (ev) openEventModal(iso, null, ev);
+        if (!ev) return;
+        if (ev._source === 'plan') { window._dayOpenDate = ev.date; loadPage('day'); return; }
+        openEventModal(iso, null, ev);
       });
     });
     container.querySelectorAll('.cal-timed-del-btn').forEach(btn => {
-      btn.addEventListener('click', async e => {
+      btn.addEventListener('click', e => {
         e.stopPropagation();
-        if (!confirm('Delete this event?')) return;
         const evId = parseInt(btn.dataset.eventId);
-        await apiFetch('DELETE', `/calendar/events/${evId}`);
-        calRemoveEventFromData(evId);
-        renderWeekGrid(_calWeekStart, _calWeekEnd);
+        const iso  = btn.dataset.date;
+        const ev   = ((_calData[iso] || {}).events || []).find(e => e.id === evId);
+        if (!ev) return;
+        _calDeleteEvent(ev, () => calLoadAndRender());
       });
     });
   } else {
@@ -1085,6 +1168,7 @@ function openEventModal(date, time, existing) {
             <option value="daily"${recCad==='daily'?' selected':''}>Daily</option>
             <option value="weekly"${recCad==='weekly'?' selected':''}>Weekly</option>
             <option value="monthly"${recCad==='monthly'?' selected':''}>Monthly</option>
+            <option value="yearly"${recCad==='yearly'?' selected':''}>Yearly</option>
           </select>
         </div>
         <div>
@@ -1335,6 +1419,56 @@ function calRemoveEventFromData(eventId) {
       _calData[iso].events = _calData[iso].events.filter(e => e.id !== eventId);
     }
   });
+}
+
+async function _calDeleteEvent(ev, afterFn) {
+  if (ev._source === 'plan') {
+    if (!confirm('Delete this plan item?')) return;
+    await apiFetch('DELETE', `/day/items/${ev._plan_item_id}`);
+    calRemoveEventFromData(ev.id);
+    afterFn();
+    return;
+  }
+  const isRecurring = ev.recurrence_cadence || ev._is_recurrence;
+  if (!isRecurring) {
+    if (!confirm('Delete this event?')) return;
+    await apiFetch('DELETE', `/calendar/events/${ev.id}`);
+    calRemoveEventFromData(ev.id);
+    afterFn();
+    return;
+  }
+  // Recurring: show scope picker
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:340px">
+      <div class="modal-header">
+        <span class="modal-title">Delete recurring event</span>
+        <button class="modal-close">×</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:8px;padding:16px 20px">
+        <button class="btn btn-secondary" id="rcl-this">Just this event</button>
+        <button class="btn btn-secondary" id="rcl-future">This and all future events</button>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-cancel-btn">Cancel</button>
+      </div>
+    </div>`;
+  const dismiss = () => { overlay.classList.remove('open'); overlay.remove(); };
+  overlay.querySelector('.modal-close').addEventListener('click', dismiss);
+  overlay.querySelector('.modal-cancel-btn').addEventListener('click', dismiss);
+  overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+  overlay.querySelector('#rcl-this').addEventListener('click', async () => {
+    dismiss();
+    await apiFetch('DELETE', `/calendar/events/${ev.id}?scope=this&occurrence_date=${ev.date}`);
+    afterFn();
+  });
+  overlay.querySelector('#rcl-future').addEventListener('click', async () => {
+    dismiss();
+    await apiFetch('DELETE', `/calendar/events/${ev.id}?scope=future&occurrence_date=${ev.date}`);
+    afterFn();
+  });
+  document.body.appendChild(overlay);
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ import os
 
 import config
 import database
-from routers import tasks, goals, notes, tags, calendar, recurrences, dashboard, settings, games, trips, packing, packing_templates, budget, itinerary, finance
+from routers import tasks, goals, notes, tags, calendar, recurrences, dashboard, settings, games, trips, packing, packing_templates, budget, itinerary, finance, investments, day, projects
 
 
 @asynccontextmanager
@@ -42,6 +42,9 @@ app.include_router(packing_templates.router, prefix="/api/packing-templates", ta
 app.include_router(budget.router, prefix="/api/trips/{trip_id}/budget", tags=["budget"])
 app.include_router(itinerary.router, prefix="/api/trips/{trip_id}/itinerary", tags=["itinerary"])
 app.include_router(finance.router, prefix="/api/finance", tags=["finance"])
+app.include_router(investments.router, prefix="/api/investments", tags=["investments"])
+app.include_router(day.router, prefix="/api/day", tags=["day"])
+app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")

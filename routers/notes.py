@@ -11,6 +11,7 @@ class NoteCreate(BaseModel):
     content: Optional[str] = None
     tag_ids: Optional[List[int]] = []
     trip_id: Optional[int] = None
+    project_id: Optional[int] = None
 
 
 class NoteUpdate(BaseModel):
@@ -20,6 +21,10 @@ class NoteUpdate(BaseModel):
     tag_ids: Optional[List[int]] = None
     goal_id: Optional[int] = None
     clear_goal: Optional[bool] = False
+    project_id: Optional[int] = None
+    clear_project_id: Optional[bool] = False
+    trip_id: Optional[int] = None
+    clear_trip_id: Optional[bool] = False
 
 
 def _note_full(note_id, conn):
@@ -46,11 +51,22 @@ def _note_full(note_id, conn):
         n["linked_goal"] = dict(g_row) if g_row else None
     else:
         n["linked_goal"] = None
+    if n.get("project_id"):
+        p_row = conn.execute("SELECT id, title, color FROM projects WHERE id = ?", (n["project_id"],)).fetchone()
+        n["linked_project"] = dict(p_row) if p_row else None
+    else:
+        n["linked_project"] = None
+    if n.get("trip_id"):
+        t_row = conn.execute("SELECT id, name FROM trips WHERE id = ?", (n["trip_id"],)).fetchone()
+        n["linked_trip"] = dict(t_row) if t_row else None
+    else:
+        n["linked_trip"] = None
     return n
 
 
 @router.get("")
-def list_notes(q: Optional[str] = None, tag_id: Optional[int] = None, trip_id: Optional[int] = None):
+def list_notes(q: Optional[str] = None, tag_id: Optional[int] = None,
+               trip_id: Optional[int] = None, project_id: Optional[int] = None):
     conn = database.get_connection()
     conditions, params = [], []
     if q:
@@ -62,9 +78,14 @@ def list_notes(q: Optional[str] = None, tag_id: Optional[int] = None, trip_id: O
     if trip_id is not None:
         conditions.append("n.trip_id = ?")
         params.append(trip_id)
+    if project_id is not None:
+        conditions.append("n.project_id = ?")
+        params.append(project_id)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     rows = conn.execute(
-        f"SELECT n.* FROM notes n {where} ORDER BY n.pinned DESC, n.updated_at DESC",
+        f"""SELECT n.*,
+               (SELECT COUNT(*) FROM tasks WHERE note_id = n.id AND status = 'pending') AS task_count
+            FROM notes n {where} ORDER BY n.pinned DESC, n.updated_at DESC""",
         params
     ).fetchall()
     notes = []
@@ -84,8 +105,8 @@ def list_notes(q: Optional[str] = None, tag_id: Optional[int] = None, trip_id: O
 def create_note(body: NoteCreate):
     conn = database.get_connection()
     row = conn.execute(
-        "INSERT INTO notes (title, content, trip_id) VALUES (?, ?, ?) RETURNING *",
-        (body.title, body.content, body.trip_id)
+        "INSERT INTO notes (title, content, trip_id, project_id) VALUES (?, ?, ?, ?) RETURNING *",
+        (body.title, body.content, body.trip_id, body.project_id)
     ).fetchone()
     note_id = row["id"]
     for tid in (body.tag_ids or []):
@@ -123,6 +144,14 @@ def update_note(note_id: int, body: NoteUpdate):
         fields.append("goal_id = NULL")
     elif body.goal_id is not None:
         fields.append("goal_id = ?"); params.append(body.goal_id)
+    if body.clear_project_id:
+        fields.append("project_id = NULL")
+    elif body.project_id is not None:
+        fields.append("project_id = ?"); params.append(body.project_id)
+    if body.clear_trip_id:
+        fields.append("trip_id = NULL")
+    elif body.trip_id is not None:
+        fields.append("trip_id = ?"); params.append(body.trip_id)
     conn.execute(f"UPDATE notes SET {', '.join(fields)} WHERE id = ?", params + [note_id])
     if body.tag_ids is not None:
         conn.execute("DELETE FROM note_tags WHERE note_id = ?", (note_id,))

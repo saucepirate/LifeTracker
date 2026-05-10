@@ -21,13 +21,20 @@ let _budgData        = null;
 let _budgPhaseFilter = 'all';
 let _budgCatFilter   = null;
 
+let _budgProjData = null;
+
 async function renderBudgetTab(container, trip) {
   _budgTrip        = trip;
   _budgPhaseFilter = 'all';
   _budgCatFilter   = null;
+  _budgProjData    = null;
   container.innerHTML = '<div class="loading-state">Loading budget…</div>';
   try {
-    _budgData = await apiFetch('GET', `/trips/${trip.id}/budget`);
+    const fetches = [apiFetch('GET', `/trips/${trip.id}/budget`)];
+    if (trip.project_id) fetches.push(apiFetch('GET', `/projects/${trip.project_id}`));
+    const [budgData, projData] = await Promise.all(fetches);
+    _budgData    = budgData;
+    _budgProjData = projData || null;
   } catch (e) {
     container.innerHTML = `<div class="empty-state"><p class="empty-state-text">${escHtml(e.message)}</p></div>`;
     return;
@@ -128,6 +135,48 @@ function _renderBudget(container) {
           }).join('')}
         </div>
       ` : ''}
+
+      <!-- Project planning estimates -->
+      ${_budgProjData ? (() => {
+        const proj = _budgProjData;
+        const estimated = proj.tasks.reduce((s, t) => s + (t.estimated_cost || 0), 0);
+        const actual    = proj.tasks.reduce((s, t) => s + (t.actual_cost    || 0), 0);
+        if (estimated === 0 && actual === 0) return '';
+        const projFmt   = v => _fmtMoney(v, cur);
+        const budgTasks = proj.tasks.filter(t => t.estimated_cost != null || t.actual_cost != null);
+        return `
+          <div class="budg-section-hdr" style="margin-top:16px">
+            Planning Estimates
+            <a class="budg-proj-link" data-proj-id="${proj.id}" href="#" style="margin-left:8px;font-size:12px;color:var(--neon-cyan)">View project ↗</a>
+          </div>
+          <div class="budg-tiles" style="margin-bottom:8px">
+            <div class="budg-tile">
+              <div class="budg-tile-val">${projFmt(estimated)}</div>
+              <div class="budg-tile-lbl">Estimated</div>
+            </div>
+            <div class="budg-tile">
+              <div class="budg-tile-val">${projFmt(actual)}</div>
+              <div class="budg-tile-lbl">Actual</div>
+            </div>
+            <div class="budg-tile">
+              <div class="budg-tile-val" style="color:var(--text-muted)">${proj.task_done}/${proj.task_total}</div>
+              <div class="budg-tile-lbl">Tasks done</div>
+            </div>
+            ${d.budget_total ? `<div class="budg-tile">
+              <div class="budg-tile-val">${Math.round(estimated / d.budget_total * 100)}%</div>
+              <div class="budg-tile-lbl">of trip budget</div>
+            </div>` : ''}
+          </div>
+          ${budgTasks.length ? `<div class="budg-proj-tasks">
+            ${budgTasks.slice(0, 8).map(t => `
+              <div class="budg-proj-task-row${t.status === 'done' ? ' done' : ''}">
+                <span class="budg-proj-task-name">${escHtml(t.title)}</span>
+                ${t.estimated_cost != null ? `<span class="budg-proj-task-est">${projFmt(t.estimated_cost)}</span>` : '<span></span>'}
+                ${t.actual_cost != null ? `<span class="budg-proj-task-act">${projFmt(t.actual_cost)}</span>` : '<span style="opacity:.4">—</span>'}
+              </div>`).join('')}
+            ${budgTasks.length > 8 ? `<div style="font-size:12px;color:var(--text-muted);padding:4px 8px">+${budgTasks.length - 8} more tasks — view in project</div>` : ''}
+          </div>` : ''}`;
+      })() : ''}
 
       <!-- Toolbar -->
       <div class="budg-toolbar">
@@ -240,6 +289,13 @@ function _bindBudgetEvents(container, trip) {
       } catch (e) { alert(e.message); }
     });
   }
+
+  // Project link → navigate to project
+  container.querySelector('.budg-proj-link')?.addEventListener('click', e => {
+    e.preventDefault();
+    window._openProjectId = parseInt(e.target.dataset.projId);
+    loadPage('projects');
+  });
 
   // Phase filter tabs
   container.querySelectorAll('.budg-phase-tab').forEach(btn => {

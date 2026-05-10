@@ -431,6 +431,47 @@ def init_db():
             conn.execute(ddl)
         except Exception:
             pass
+    # Migration: tag_id on day plan items
+    try:
+        conn.execute("ALTER TABLE day_plan_items ADD COLUMN tag_id INTEGER REFERENCES tags(id) ON DELETE SET NULL")
+    except Exception:
+        pass
+    # Migration: link day plan items to calendar events
+    try:
+        conn.execute("ALTER TABLE day_plan_items ADD COLUMN cal_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL")
+    except Exception:
+        pass
+    # Migration: recurring event exceptions (single-instance deletions)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS event_exceptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                exception_date TEXT NOT NULL,
+                UNIQUE(event_id, exception_date)
+            )""")
+    except Exception:
+        pass
+    # Migration: actual_cost on project_tasks
+    try:
+        conn.execute("ALTER TABLE project_tasks ADD COLUMN actual_cost REAL")
+    except Exception:
+        pass
+    # Migration: project_id on notes
+    try:
+        conn.execute("ALTER TABLE notes ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+    except Exception:
+        pass
+    # Migration: project_id on trips
+    try:
+        conn.execute("ALTER TABLE trips ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+    except Exception:
+        pass
+    # Migration: trip_id on projects
+    try:
+        conn.execute("ALTER TABLE projects ADD COLUMN trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL")
+    except Exception:
+        pass
 
     # Finance tables
     conn.executescript("""
@@ -558,6 +599,80 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_fintx_date ON finance_transactions(date);
         CREATE INDEX IF NOT EXISTS idx_fintx_cat  ON finance_transactions(category_id);
         CREATE INDEX IF NOT EXISTS idx_finrules_pattern ON finance_category_rules(rule_type, pattern);
+
+        CREATE TABLE IF NOT EXISTS inv_imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            import_type TEXT NOT NULL,
+            filename TEXT,
+            imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+            row_count INTEGER NOT NULL DEFAULT 0,
+            summary TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS inv_positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            import_id INTEGER NOT NULL REFERENCES inv_imports(id) ON DELETE CASCADE,
+            account_number TEXT,
+            account_name TEXT,
+            symbol TEXT NOT NULL,
+            description TEXT,
+            quantity REAL,
+            last_price REAL,
+            current_value REAL,
+            today_gain_dollar REAL,
+            today_gain_pct REAL,
+            total_gain_dollar REAL,
+            total_gain_pct REAL,
+            pct_of_account REAL,
+            cost_basis_total REAL,
+            avg_cost_basis REAL,
+            security_type TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS inv_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            import_id INTEGER REFERENCES inv_imports(id) ON DELETE SET NULL,
+            run_date TEXT NOT NULL,
+            account_name TEXT,
+            account_number TEXT,
+            action_type TEXT NOT NULL,
+            action_raw TEXT,
+            symbol TEXT,
+            description TEXT,
+            security_type TEXT,
+            price REAL,
+            quantity REAL,
+            amount REAL,
+            settlement_date TEXT,
+            UNIQUE(run_date, account_number, symbol, quantity, amount)
+        );
+
+        CREATE TABLE IF NOT EXISTS inv_sp500 (
+            observation_date TEXT PRIMARY KEY,
+            value REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS inv_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            note_type TEXT NOT NULL DEFAULT 'general',
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS inv_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            account_number TEXT,
+            action_type TEXT NOT NULL DEFAULT 'review',
+            title TEXT NOT NULL,
+            notes TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            due_date TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
     """)
     # Migrations for added columns (safe on fresh + existing DBs)
     for ddl in [
@@ -610,6 +725,91 @@ def init_db():
             conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('fin_cc_payment_excluded','1')")
     except Exception:
         pass
+
+    # Day Planner tables
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS day_plan_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_date TEXT NOT NULL,
+            title TEXT NOT NULL,
+            source_type TEXT NOT NULL DEFAULT 'manual',
+            source_id INTEGER,
+            section TEXT NOT NULL DEFAULT 'later',
+            start_time TEXT,
+            end_time TEXT,
+            duration_minutes INTEGER,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'planned',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            notes TEXT,
+            goal_id INTEGER,
+            task_id INTEGER,
+            habit_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS day_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_date TEXT NOT NULL UNIQUE,
+            morning_plan TEXT NOT NULL DEFAULT '',
+            evening_reflection TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_day_items_date ON day_plan_items(plan_date);
+
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            color TEXT NOT NULL DEFAULT 'cyan',
+            status TEXT NOT NULL DEFAULT 'active',
+            start_date TEXT,
+            deadline TEXT,
+            goal_id INTEGER REFERENCES goals(id) ON DELETE SET NULL,
+            is_ongoing INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS project_owners (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'owner'
+        );
+
+        CREATE TABLE IF NOT EXISTS project_milestones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            description TEXT,
+            due_date TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            is_deliverable INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            completed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS project_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            milestone_id INTEGER REFERENCES project_milestones(id) ON DELETE SET NULL,
+            title TEXT NOT NULL,
+            notes TEXT,
+            status TEXT NOT NULL DEFAULT 'todo',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            task_type TEXT NOT NULL DEFAULT 'todo',
+            due_date TEXT,
+            assigned_to TEXT,
+            estimated_cost REAL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT
+        );
+    """)
 
     conn.commit()
     conn.close()

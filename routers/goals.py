@@ -76,9 +76,42 @@ def _recalc_progress(goal_id, conn):
             total_minutes = sum(r['value'] or 0 for r in rows)
             sources.append(min(100.0, (total_minutes / wt * 100)))
 
+    # Linked project progress — weighted (deliverable tasks count 2×)
+    try:
+        proj_rows = conn.execute(
+            "SELECT id FROM projects WHERE goal_id = ? AND status NOT IN ('completed','cancelled')",
+            (goal_id,)
+        ).fetchall()
+        if proj_rows:
+            total_ew, total_dw = 0, 0
+            for pr in proj_rows:
+                counts = conn.execute(
+                    """SELECT SUM(CASE WHEN pt.status NOT IN ('cancelled','skipped')
+                                       THEN CASE WHEN pm.is_deliverable=1 THEN 2 ELSE 1 END
+                                       ELSE 0 END) as ew,
+                              SUM(CASE WHEN pt.status='done'
+                                       THEN CASE WHEN pm.is_deliverable=1 THEN 2 ELSE 1 END
+                                       ELSE 0 END) as dw
+                       FROM project_tasks pt
+                       LEFT JOIN project_milestones pm ON pm.id = pt.milestone_id
+                       WHERE pt.project_id = ?""", (pr['id'],)
+                ).fetchone()
+                total_ew += counts['ew'] or 0
+                total_dw += counts['dw'] or 0
+            if total_ew:
+                sources.append(min(100.0, total_dw / total_ew * 100))
+    except Exception:
+        pass
+
     progress_pct = sum(sources) / len(sources) if sources else 0.0
     conn.execute("UPDATE goals SET progress_pct = ? WHERE id = ?", (progress_pct, goal_id))
     business.evaluate_on_track(goal_id, conn)
+
+
+def _recalc_goal_for_project(project_id, conn):
+    row = conn.execute("SELECT goal_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if row and row['goal_id']:
+        _recalc_progress(row['goal_id'], conn)
 
 
 def _goal_full(conn, goal_id):
@@ -149,6 +182,44 @@ def _goal_full(conn, goal_id):
         (goal_id,)
     ).fetchall()
     g['notes'] = [dict(r) for r in notes]
+
+    linked_proj_rows = conn.execute(
+        """SELECT p.id, p.title, p.color, p.status, p.deadline
+           FROM projects p WHERE p.goal_id = ?
+           ORDER BY CASE WHEN p.status IN ('completed','cancelled') THEN 1 ELSE 0 END,
+                    p.deadline IS NULL, p.deadline ASC""",
+        (goal_id,)
+    ).fetchall()
+    today_iso = date.today().isoformat()
+    linked_projects = []
+    for pr in linked_proj_rows:
+        pp = dict(pr)
+        counts = conn.execute(
+            """SELECT SUM(CASE WHEN pt.status NOT IN ('cancelled','skipped')
+                               THEN CASE WHEN pm.is_deliverable=1 THEN 2 ELSE 1 END
+                               ELSE 0 END) as ew,
+                      SUM(CASE WHEN pt.status='done'
+                               THEN CASE WHEN pm.is_deliverable=1 THEN 2 ELSE 1 END
+                               ELSE 0 END) as dw
+               FROM project_tasks pt
+               LEFT JOIN project_milestones pm ON pm.id = pt.milestone_id
+               WHERE pt.project_id = ?""", (pr['id'],)
+        ).fetchone()
+        ew = counts['ew'] or 0
+        dw = counts['dw'] or 0
+        pp['progress'] = round(dw / ew * 100) if ew else 0
+        hp_overdue = conn.execute(
+            """SELECT COUNT(*) FROM project_tasks
+               WHERE project_id=? AND status NOT IN ('done','cancelled','skipped','blocked')
+                 AND priority='high' AND due_date < ?""",
+            (pr['id'], today_iso)
+        ).fetchone()[0]
+        pp['is_at_risk'] = bool(
+            (pr['deadline'] and pr['deadline'] < today_iso and pr['status'] not in ('completed','cancelled'))
+            or hp_overdue > 0
+        )
+        linked_projects.append(pp)
+    g['linked_projects'] = linked_projects
 
     return g
 

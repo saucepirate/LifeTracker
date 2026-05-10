@@ -15,16 +15,21 @@ let _expandedTaskId = null;
 let _showTargets = false;
 let _showMilestones = false;
 let _showHabits = false;
+let _projTasks = [];
+let _tProjects = [];
+let _activeProjectId = null;
 
 const LISTS_KEY = 'lt_task_lists';
 let _listConfigs = [];
 
 // ── Entry point ───────────────────────────────────────────────
 registerPage('tasks', async function(content) {
-  _filter = 'all';
+  _filter = window._tasksInitFilter || 'all';
+  window._tasksInitFilter = null;
   _activeTagIds = new Set();
   _activeGoalId = null;
   _activeTripId = null;
+  _activeProjectId = null;
   _selectedId = null;
   _expandedTaskId = null;
   _wideMode = true;
@@ -77,18 +82,22 @@ function removeListConfig(id) { saveListConfigs(loadListConfigs().filter(c => c.
 // ── Data loading ──────────────────────────────────────────────
 async function loadAll() {
   try { await apiFetch('POST', '/recurrences/generate'); } catch(e) { /* non-fatal */ }
-  const [tr, gr, rr, gi, trips] = await Promise.all([
+  const [tr, gr, rr, gi, trips, pjAll, pjTasks] = await Promise.all([
     apiFetch('GET', '/tasks'),
     apiFetch('GET', '/goals'),
     apiFetch('GET', '/tags'),
     apiFetch('GET', '/goals/items').catch(() => ({ metrics: [], milestones: [], habits: [] })),
     apiFetch('GET', '/trips').catch(() => ({ upcoming: [], planning: [], past: [] })),
+    apiFetch('GET', '/projects/?status=active').catch(() => ({ items: [] })),
+    apiFetch('GET', '/projects/tasks').catch(() => ({ items: [] })),
   ]);
   _tasks = tr.items;
   _tGoals = gr.items;
   _tags  = rr.items;
   _goalItems = gi;
   _tTrips = [...(trips.upcoming || []), ...(trips.planning || []), ...(trips.past || [])];
+  _tProjects = pjAll.items || [];
+  _projTasks = pjTasks.items || [];
 }
 
 // ── Render orchestration ──────────────────────────────────────
@@ -257,6 +266,12 @@ function renderSecondaryFilters() {
       ${_tTrips.map(t => `<option value="${t.id}"${_activeTripId === t.id ? ' selected' : ''}>${escHtml(t.name)}</option>`).join('')}
     </select>` : '';
 
+  const projectSelect = _tProjects.length ? `
+    <select id="project-filter-select" class="tf-goal-select">
+      <option value="">All projects</option>
+      ${_tProjects.map(p => `<option value="${p.id}"${_activeProjectId === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`).join('')}
+    </select>` : '';
+
   function mkSection(label, body, hasActive) {
     return `
       <div class="tf-section">
@@ -283,6 +298,10 @@ function renderSecondaryFilters() {
     tripSelect,
     _activeTripId !== null) : '';
 
+  const projectSection = _tProjects.length ? mkSection('Project',
+    `<div class="tf-row">${projectSelect}</div>`,
+    _activeProjectId !== null) : '';
+
   const goalSection = mkSection('Goal',
     `<div class="tf-row">${goalSelect}<span class="tf-label">Include</span>
       <button class="tf-pill goal-type-pill${_showTargets    ? ' active tf-active--cyan'   : ''}" data-type="targets">Targets</button>
@@ -291,7 +310,7 @@ function renderSecondaryFilters() {
     </div>`,
     _activeGoalId !== null || _showTargets || _showMilestones || _showHabits);
 
-  container.innerHTML = `<div class="task-filter-bar">${statusSection}${tagsSection}${tripSection}${goalSection}</div>`;
+  container.innerHTML = `<div class="task-filter-bar">${statusSection}${tagsSection}${tripSection}${projectSection}${goalSection}</div>`;
 
   // Any chevron click toggles all sections together
   container.querySelectorAll('.tf-section-hdr').forEach(hdr => {
@@ -333,6 +352,14 @@ function renderSecondaryFilters() {
   if (tripSel) {
     tripSel.addEventListener('change', e => {
       _activeTripId = parseInt(e.target.value) || null;
+      renderAllLists();
+    });
+  }
+
+  const projectSel = container.querySelector('#project-filter-select');
+  if (projectSel) {
+    projectSel.addEventListener('change', e => {
+      _activeProjectId = parseInt(e.target.value) || null;
       renderAllLists();
     });
   }
@@ -390,6 +417,12 @@ function buildListColumn(config, isMaster) {
   } else if (config.type === 'trip') {
     const trip = _tTrips.find(t => t.id === config.filter_id);
     if (trip) filterBadge = `<span class="tag-badge tag-blue" style="font-size:12px">${escHtml(trip.name)}</span>`;
+  } else if (config.type === 'project') {
+    const proj = _tProjects.find(p => p.id === config.filter_id);
+    if (proj) {
+      const color = (typeof PROJ_COLOR_HEX !== 'undefined' && PROJ_COLOR_HEX[proj.color]) || 'var(--neon-cyan)';
+      filterBadge = `<span class="tag-badge" style="background:${color}22;color:${color};border:1px solid ${color}44;font-size:12px">${escHtml(proj.title)}</span>`;
+    }
   }
 
   const addBtn = (!isMaster && config.type === 'goal')
@@ -460,6 +493,17 @@ function getTasksForConfig(config) {
     if (tripTagIds.size)
       result = result.filter(t => !(t.tags && t.tags.some(tg => tripTagIds.has(tg.id))));
 
+    if (_activeProjectId) {
+      // Project filter: show only project tasks from the selected project
+      let projResult = _projTasks.filter(t => t._project_id === _activeProjectId && t.status === 'pending');
+      if (_filter === 'today')
+        projResult = projResult.filter(t => t.due_date && (t.due_date === today || t.due_date < today));
+      else if (_filter === 'upcoming')
+        projResult = projResult.filter(t => t.due_date && t.due_date > today && t.due_date <= in7ISO);
+      else if (_filter === 'completed' || _filter === 'recurring')
+        projResult = [];
+      result = projResult;
+    } else {
     if (_activeTagIds.size > 0)
       result = result.filter(t => t.tags && t.tags.some(tg => _activeTagIds.has(tg.id)));
     if (_activeGoalId)
@@ -469,6 +513,21 @@ function getTasksForConfig(config) {
       if (trip?.tag_id)
         result = result.filter(t => t.tags && t.tags.some(tg => tg.id === trip.tag_id));
     }
+
+    // Include project tasks for all/today/upcoming filters (INT-001)
+    if ((_filter === 'all' || _filter === 'today' || _filter === 'upcoming') &&
+        !_activeTagIds.size && !_activeGoalId && !_activeTripId) {
+      const projListIds = new Set(listConfigs.filter(c => c.type === 'project').map(c => c.filter_id));
+      let projResult = _projTasks.filter(t => t.status === 'pending');
+      if (_filter === 'today')
+        projResult = projResult.filter(t => t.due_date && (t.due_date === today || t.due_date < today));
+      else if (_filter === 'upcoming')
+        projResult = projResult.filter(t => t.due_date && t.due_date > today && t.due_date <= in7ISO);
+      if (projListIds.size)
+        projResult = projResult.filter(t => !projListIds.has(t._project_id));
+      result = [...result, ...projResult];
+    }
+    } // end else (_activeProjectId)
   } else if (config.type === 'tag') {
     result = result.filter(t => t.tags && t.tags.some(tg => tg.id === config.filter_id));
   } else if (config.type === 'goal') {
@@ -479,6 +538,24 @@ function getTasksForConfig(config) {
       result = result.filter(t => t.tags && t.tags.some(tg => tg.id === trip.tag_id));
     else
       result = [];
+  } else if (config.type === 'project') {
+    result = _projTasks.filter(t => t._project_id === config.filter_id && t.status === 'pending');
+  }
+
+  // Collapse recurring tasks to only their next (earliest) pending occurrence
+  if (_filter !== 'completed') {
+    const nextByRec = new Map();
+    const nonRec = [];
+    result.forEach(t => {
+      if (t.is_recurring && t.recurrence_id && t.status === 'pending') {
+        const cur = nextByRec.get(t.recurrence_id);
+        if (!cur || (t.due_date && (!cur.due_date || t.due_date < cur.due_date)))
+          nextByRec.set(t.recurrence_id, t);
+      } else {
+        nonRec.push(t);
+      }
+    });
+    result = [...nonRec, ...nextByRec.values()];
   }
 
   return sortedTasks(result);
@@ -523,6 +600,13 @@ function renderColumnTasks(config, bodyEl) {
       html += dateItems.map(item => item._kind === 'milestone' ? milestoneRowHTML(item) : metricRowHTML(item)).join('');
       bodyEl.innerHTML = html;
     }
+  } else if (config.type === 'project') {
+    if (!tasks.length) {
+      bodyEl.innerHTML = `<div class="empty-state" style="padding:28px 12px;text-align:center">
+        <div class="empty-state-text">No pending project tasks</div></div>`;
+    } else {
+      bodyEl.innerHTML = tasks.map(t => taskRowHTML(t, false)).join('');
+    }
   } else if (!tasks.length) {
     bodyEl.innerHTML = `<div class="empty-state" style="padding:28px 12px;text-align:center">
       <div class="empty-state-text">No tasks</div></div>`;
@@ -537,6 +621,11 @@ function renderColumnTasks(config, bodyEl) {
   bodyEl.querySelectorAll('.task-row').forEach(row => {
     row.addEventListener('click', e => {
       if (e.target.closest('.task-row-check') || e.target.closest('.task-expand-body')) return;
+      if (row.dataset.source === 'project') {
+        window._openProjectId = parseInt(row.dataset.projectId);
+        loadPage('projects');
+        return;
+      }
       if (isWideMaster) {
         toggleExpand(parseInt(row.dataset.id));
       } else {
@@ -551,8 +640,14 @@ function renderColumnTasks(config, bodyEl) {
       const taskRow = cb.closest('.task-row');
       if (!taskRow) return;
       const taskId = parseInt(taskRow.dataset.id);
-      const task = _tasks.find(t => t.id === taskId);
-      if (task && task.status === 'pending') doCompleteTask(taskId);
+      if (taskRow.dataset.source === 'project') {
+        const projectId = parseInt(taskRow.dataset.projectId);
+        const pt = _projTasks.find(t => t.id === taskId);
+        if (pt && pt.status === 'pending') doCompleteProjectTask(taskId, projectId);
+      } else {
+        const task = _tasks.find(t => t.id === taskId);
+        if (task && task.status === 'pending') doCompleteTask(taskId);
+      }
     });
   });
 
@@ -718,6 +813,7 @@ function taskRowHTML(task, isWide = false) {
   const done    = task.status === 'completed';
   const overdue = !done && task.due_date && task.due_date < today;
   const isToday2 = !done && task.due_date === today;
+  const isProjTask = task._source === 'project';
 
   let dueLabelHTML = '';
   if (task.due_date) {
@@ -730,9 +826,18 @@ function taskRowHTML(task, isWide = false) {
     dueLabelHTML = `<span class="${cls}">${label}</span>`;
   }
 
-  const recurHTML = task.is_recurring
-    ? `<span class="recur-icon">↺ <span style="color:var(--text-muted)">${task.recurrence?.cadence || 'recurring'}</span></span>`
-    : '';
+  let metaHTML = '';
+  if (isProjTask) {
+    const color = (typeof PROJ_COLOR_HEX !== 'undefined' && PROJ_COLOR_HEX[task._project_color]) || 'var(--neon-cyan)';
+    metaHTML = `<div class="task-row-meta"><span class="task-proj-badge" style="background:${color}1a;color:${color}">${escHtml(task._project_title || '')}</span></div>`;
+  } else if (task.tags.length || task.is_recurring) {
+    const recurHTML = task.is_recurring
+      ? `<span class="recur-icon">↺ <span style="color:var(--text-muted)">${task.recurrence?.cadence || 'recurring'}</span></span>`
+      : '';
+    metaHTML = `<div class="task-row-meta">${tagsHTML(task.tags)}${recurHTML}</div>`;
+  }
+
+  const projAttrs = isProjTask ? ` data-source="project" data-project-id="${task._project_id}"` : '';
 
   const innerContent = `
     ${priorityDotHTML(task.priority)}
@@ -741,14 +846,21 @@ function taskRowHTML(task, isWide = false) {
     </div>
     <div class="task-row-body">
       <div class="task-row-title${done ? ' done' : ''}">${escHtml(task.title)}</div>
-      ${task.tags.length || task.is_recurring
-        ? `<div class="task-row-meta">${tagsHTML(task.tags)}${recurHTML}</div>`
-        : ''}
+      ${metaHTML}
     </div>
     <div class="task-row-right">${dueLabelHTML}${done ? `<button class="task-reopen-btn" data-id="${task.id}" title="Reopen task">&#8629;</button>` : ''}</div>`;
 
   if (!isWide) {
-    return `<div class="task-row${done ? ' done-row' : ''}" data-id="${task.id}">${innerContent}</div>`;
+    return `<div class="task-row${done ? ' done-row' : ''}" data-id="${task.id}"${projAttrs}>${innerContent}</div>`;
+  }
+
+  if (isProjTask) {
+    return `
+      <div class="task-row wide${done ? ' done-row' : ''}" data-id="${task.id}"${projAttrs}>
+        <div class="task-row-head">${innerContent}</div>
+        <div class="task-row-preview"></div>
+        <div class="task-expand-body"></div>
+      </div>`;
   }
 
   const preview = previewContentHTML(task);
@@ -1022,6 +1134,7 @@ function renderDetail(task) {
               <option value="daily"${rec.cadence==='daily'?' selected':''}>Daily</option>
               <option value="weekly"${rec.cadence==='weekly'?' selected':''}>Weekly</option>
               <option value="monthly"${rec.cadence==='monthly'?' selected':''}>Monthly</option>
+              <option value="yearly"${rec.cadence==='yearly'?' selected':''}>Yearly</option>
             </select>
           </div>
           <div class="detail-field">
@@ -1234,6 +1347,15 @@ async function doCompleteTask(taskId) {
   } catch(e) { alert('Error: ' + e.message); }
 }
 
+async function doCompleteProjectTask(taskId, projectId) {
+  try {
+    await apiFetch('PATCH', `/projects/${projectId}/tasks/${taskId}`, { status: 'done' });
+    const idx = _projTasks.findIndex(t => t.id === taskId);
+    if (idx >= 0) _projTasks[idx] = { ..._projTasks[idx], status: 'completed', _proj_status: 'done' };
+    renderAll();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
 async function doReopenTask(taskId) {
   try {
     const updated = await apiFetch('PUT', `/tasks/${taskId}`, { status: 'pending' });
@@ -1327,6 +1449,7 @@ function openNewTaskModal(prefilledGoalId = null) {
             <option value="daily">Daily</option>
             <option value="weekly" selected>Weekly</option>
             <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0">
@@ -1413,10 +1536,11 @@ function openAddListModal() {
 
   const tagOpts  = _tags.map(tg => `<option value="tag-${tg.id}">${escHtml(tg.name)}</option>`).join('');
   const goalOpts = _tGoals.map(g  => `<option value="goal-${g.id}">${escHtml(g.title)}</option>`).join('');
+  const projOpts = _tProjects.map(p => `<option value="project-${p.id}">${escHtml(p.title)}</option>`).join('');
   const tripOpts = _tTrips.filter(t => t.tag_id).map(t => `<option value="trip-${t.id}">${escHtml(t.name)}</option>`).join('');
 
-  if (!tagOpts && !goalOpts && !tripOpts) {
-    alert('Create some tags, goals, or trips first to build a filtered list.');
+  if (!tagOpts && !goalOpts && !projOpts && !tripOpts) {
+    alert('Create some tags, goals, projects, or trips first to build a filtered list.');
     return;
   }
 
@@ -1425,9 +1549,10 @@ function openAddListModal() {
       <label class="form-label">Filter by</label>
       <select class="form-select" id="al-filter">
         <option value="">— pick a filter —</option>
-        ${tagOpts  ? `<optgroup label="Tags">${tagOpts}</optgroup>`   : ''}
-        ${goalOpts ? `<optgroup label="Goals">${goalOpts}</optgroup>` : ''}
-        ${tripOpts ? `<optgroup label="Trips">${tripOpts}</optgroup>` : ''}
+        ${tagOpts  ? `<optgroup label="Tags">${tagOpts}</optgroup>`         : ''}
+        ${goalOpts ? `<optgroup label="Goals">${goalOpts}</optgroup>`       : ''}
+        ${projOpts ? `<optgroup label="Projects">${projOpts}</optgroup>`   : ''}
+        ${tripOpts ? `<optgroup label="Trips">${tripOpts}</optgroup>`       : ''}
       </select>
     </div>
     <div class="form-group">
@@ -1460,6 +1585,9 @@ function openAddListModal() {
     } else if (type === 'goal') {
       const goal = _tGoals.find(g => g.id === id);
       if (goal) nameInput.value = goal.title;
+    } else if (type === 'project') {
+      const proj = _tProjects.find(p => p.id === id);
+      if (proj) nameInput.value = proj.title;
     } else if (type === 'trip') {
       const trip = _tTrips.find(t => t.id === id);
       if (trip) nameInput.value = trip.name;
@@ -1475,7 +1603,7 @@ function sortedTasks(arr) {
   return [...arr].sort((a, b) => {
     switch (_sort) {
       case 'priority': return (order[a.priority] ?? 1) - (order[b.priority] ?? 1);
-      case 'created':  return b.created_at.localeCompare(a.created_at);
+      case 'created':  return (b.created_at || '0000').localeCompare(a.created_at || '0000');
       case 'alpha':    return a.title.localeCompare(b.title);
       default: {
         const ad = a.due_date || 'zzzz', bd = b.due_date || 'zzzz';

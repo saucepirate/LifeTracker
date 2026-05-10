@@ -59,6 +59,22 @@ def _task_full(conn, task_id):
 
 
 # Specific paths before parameterized ones
+def _proj_task_item(r):
+    """Convert a project_tasks row to a Tasks-compatible dict."""
+    t = dict(r)
+    proj_status = t['status']
+    return {
+        'id': t['id'], 'title': t['title'], 'notes': t['notes'],
+        'status': 'completed' if proj_status == 'done' else 'pending',
+        'priority': t['priority'], 'due_date': t['due_date'],
+        'completed_at': t.get('completed_at'), 'is_recurring': False,
+        'tags': [], 'subtasks': [], 'recurrence': None, 'linked_note': None,
+        '_source': 'project', '_project_id': t['project_id'],
+        '_project_title': t['project_title'], '_project_color': t['project_color'],
+        '_milestone_title': t.get('milestone_title'), '_proj_status': proj_status,
+    }
+
+
 @router.get("/today")
 def tasks_today():
     business.generate_recurring_tasks()
@@ -71,6 +87,24 @@ def tasks_today():
         (today, today)
     ).fetchall()
     items = [_task_full(conn, r['id']) for r in rows]
+
+    # Add dated project tasks overdue or due today (INT-001)
+    proj_rows = conn.execute(
+        """SELECT pt.id, pt.project_id, pt.title, pt.notes, pt.status, pt.priority,
+                  pt.due_date, pt.completed_at,
+                  p.title as project_title, p.color as project_color,
+                  pm.title as milestone_title
+           FROM project_tasks pt
+           JOIN projects p ON p.id = pt.project_id
+           LEFT JOIN project_milestones pm ON pm.id = pt.milestone_id
+           WHERE pt.status IN ('todo','in_progress') AND pt.due_date IS NOT NULL
+             AND (pt.due_date = ? OR pt.due_date < ?) AND p.status = 'active'
+           ORDER BY pt.due_date ASC,
+                    CASE pt.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END""",
+        (today, today)
+    ).fetchall()
+    items.extend(_proj_task_item(r) for r in proj_rows)
+
     conn.close()
     return {"items": items, "total": len(items)}
 
@@ -87,6 +121,23 @@ def tasks_upcoming():
         (today, end)
     ).fetchall()
     items = [_task_full(conn, r['id']) for r in rows]
+
+    # Add dated project tasks due in next 7 days (INT-001)
+    proj_rows = conn.execute(
+        """SELECT pt.id, pt.project_id, pt.title, pt.notes, pt.status, pt.priority,
+                  pt.due_date, pt.completed_at,
+                  p.title as project_title, p.color as project_color,
+                  pm.title as milestone_title
+           FROM project_tasks pt
+           JOIN projects p ON p.id = pt.project_id
+           LEFT JOIN project_milestones pm ON pm.id = pt.milestone_id
+           WHERE pt.status IN ('todo','in_progress') AND pt.due_date > ? AND pt.due_date <= ?
+             AND p.status = 'active'
+           ORDER BY pt.due_date ASC""",
+        (today, end)
+    ).fetchall()
+    items.extend(_proj_task_item(r) for r in proj_rows)
+
     conn.close()
     return {"items": items, "total": len(items)}
 

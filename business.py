@@ -85,6 +85,9 @@ def generate_recurring_tasks(until=None):
                 mdiff = (pt_date.year - ref.year) * 12 + (pt_date.month - ref.month)
                 target_day = rec['day_of_month'] or ref.day
                 keep = pt_date.day == target_day and mdiff % interval == 0
+            elif cadence == 'yearly':
+                ydiff = pt_date.year - ref.year
+                keep = pt_date.month == ref.month and pt_date.day == ref.day and ydiff % interval == 0
             else:
                 keep = True
             if not keep:
@@ -116,6 +119,9 @@ def generate_recurring_tasks(until=None):
                 month_diff = (current.year - ref.year) * 12 + (current.month - ref.month)
                 target_day = rec['day_of_month'] or ref.day
                 should = current.day == target_day and month_diff % interval == 0
+            elif cadence == 'yearly':
+                ydiff = current.year - ref.year
+                should = current.month == ref.month and current.day == ref.day and ydiff % interval == 0
             elif cadence == 'custom':
                 if days_of_week:
                     should = current.weekday() in days_of_week
@@ -186,6 +192,31 @@ def evaluate_on_track(goal_id, conn):
             (goal_id, today_str)
         ).fetchone()[0]
         checks.append(overdue == 0)
+
+    # Project check: off-track if any linked active project has overdue deadline or high-priority overdue tasks
+    try:
+        proj_rows = conn.execute(
+            """SELECT p.deadline,
+                      (SELECT COUNT(*) FROM project_tasks pt
+                       WHERE pt.project_id = p.id
+                         AND pt.status NOT IN ('done','cancelled','skipped','blocked')
+                         AND pt.priority = 'high' AND pt.due_date < ?) as hp_overdue
+               FROM projects p
+               WHERE p.goal_id = ? AND p.status NOT IN ('completed','cancelled','paused')""",
+            (today_str, goal_id)
+        ).fetchall()
+        if proj_rows:
+            proj_ok = True
+            for pr in proj_rows:
+                if pr['deadline'] and pr['deadline'] < today_str:
+                    proj_ok = False
+                    break
+                if pr['hp_overdue'] and pr['hp_overdue'] > 0:
+                    proj_ok = False
+                    break
+            checks.append(proj_ok)
+    except Exception:
+        pass
 
     is_on_track = 1 if (all(checks) if checks else True) else 0
     conn.execute("UPDATE goals SET is_on_track = ? WHERE id = ?", (is_on_track, goal_id))
