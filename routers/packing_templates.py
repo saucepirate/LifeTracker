@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import database
 
 router = APIRouter()
@@ -8,10 +8,20 @@ router = APIRouter()
 
 class TemplateCreate(BaseModel):
     name: str
+    icon: str = '📋'
+    filter_trip_type: str = 'any'
+    filter_destination: str = 'any'
+    filter_length: str = 'any'
+    source_id: Optional[str] = None
 
 
 class TemplateUpdate(BaseModel):
     name: Optional[str] = None
+    icon: Optional[str] = None
+    filter_trip_type: Optional[str] = None
+    filter_destination: Optional[str] = None
+    filter_length: Optional[str] = None
+    source_id: Optional[str] = None
 
 
 class TCategoryCreate(BaseModel):
@@ -29,6 +39,7 @@ class TItemCreate(BaseModel):
     quantity: int = 1
     always_bring: int = 0
     sort_order: int = 0
+    owner_type: str = 'all_travelers'
 
 
 class TItemUpdate(BaseModel):
@@ -36,6 +47,7 @@ class TItemUpdate(BaseModel):
     quantity: Optional[int] = None
     always_bring: Optional[int] = None
     sort_order: Optional[int] = None
+    owner_type: Optional[str] = None
 
 
 class TSuggestedTaskCreate(BaseModel):
@@ -116,8 +128,9 @@ def list_templates():
 def create_template(body: TemplateCreate):
     conn = database.get_connection()
     result = conn.execute(
-        "INSERT INTO packing_templates (name) VALUES (?) RETURNING id",
-        (body.name,)
+        """INSERT INTO packing_templates (name, icon, filter_trip_type, filter_destination, filter_length, source_id)
+           VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
+        (body.name, body.icon, body.filter_trip_type, body.filter_destination, body.filter_length, body.source_id)
     ).fetchone()
     template_id = result[0]
     conn.commit()
@@ -143,10 +156,21 @@ def update_template(template_id: int, body: TemplateUpdate):
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Template not found.")
-    name = body.name if body.name is not None else row['name']
+    fields = {}
+    if body.name               is not None: fields['name']               = body.name
+    if body.icon               is not None: fields['icon']               = body.icon
+    if body.filter_trip_type   is not None: fields['filter_trip_type']   = body.filter_trip_type
+    if body.filter_destination is not None: fields['filter_destination'] = body.filter_destination
+    if body.filter_length      is not None: fields['filter_length']      = body.filter_length
+    if body.source_id          is not None: fields['source_id']          = body.source_id
+    if not fields:
+        t = _template_full(conn, template_id)
+        conn.close()
+        return t
+    set_clause = ', '.join(f"{k} = ?" for k in fields)
     conn.execute(
-        "UPDATE packing_templates SET name = ?, updated_at = datetime('now') WHERE id = ?",
-        (name, template_id)
+        f"UPDATE packing_templates SET {set_clause}, updated_at = datetime('now') WHERE id = ?",
+        (*fields.values(), template_id)
     )
     conn.commit()
     t = _template_full(conn, template_id)
@@ -253,8 +277,8 @@ def add_template_item(template_id: int, cat_id: int, body: TItemCreate):
         (cat_id,)
     ).fetchone()[0]
     conn.execute(
-        "INSERT INTO template_items (template_category_id, name, quantity, always_bring, sort_order) VALUES (?, ?, ?, ?, ?)",
-        (cat_id, body.name, body.quantity, body.always_bring, max_order + 1)
+        "INSERT INTO template_items (template_category_id, name, quantity, always_bring, sort_order, owner_type) VALUES (?, ?, ?, ?, ?, ?)",
+        (cat_id, body.name, body.quantity, body.always_bring, max_order + 1, body.owner_type)
     )
     conn.commit()
     t = _template_full(conn, template_id)
@@ -272,10 +296,11 @@ def update_template_item(template_id: int, cat_id: int, item_id: int, body: TIte
         conn.close()
         raise HTTPException(status_code=404, detail="Item not found.")
     fields = {}
-    if body.name        is not None: fields['name']        = body.name
-    if body.quantity    is not None: fields['quantity']    = body.quantity
+    if body.name         is not None: fields['name']         = body.name
+    if body.quantity     is not None: fields['quantity']     = body.quantity
     if body.always_bring is not None: fields['always_bring'] = body.always_bring
-    if body.sort_order  is not None: fields['sort_order']  = body.sort_order
+    if body.sort_order   is not None: fields['sort_order']   = body.sort_order
+    if body.owner_type   is not None: fields['owner_type']   = body.owner_type
     if fields:
         set_clause = ', '.join(f"{k} = ?" for k in fields)
         conn.execute(f"UPDATE template_items SET {set_clause} WHERE id = ?", (*fields.values(), item_id))
@@ -358,3 +383,84 @@ def delete_suggested_task(template_id: int, task_id: int):
     conn.execute("DELETE FROM template_suggested_tasks WHERE id = ?", (task_id,))
     conn.commit()
     conn.close()
+
+
+# ── Bulk create/replace (for template editor) ──────────────────
+
+class PresetItemIn(BaseModel):
+    name: str
+    quantity: int = 1
+    owner_type: str = 'all_travelers'
+
+
+class PresetCategoryIn(BaseModel):
+    name: str
+    items: List[PresetItemIn] = []
+
+
+class TemplateFromPresetBody(BaseModel):
+    name: str
+    icon: str = '📋'
+    filter_trip_type: str = 'any'
+    filter_destination: str = 'any'
+    filter_length: str = 'any'
+    source_id: Optional[str] = None
+    categories: List[PresetCategoryIn] = []
+
+
+@router.post("/from-preset", status_code=201)
+def create_from_preset(body: TemplateFromPresetBody):
+    conn = database.get_connection()
+    result = conn.execute(
+        """INSERT INTO packing_templates (name, icon, filter_trip_type, filter_destination, filter_length, source_id)
+           VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
+        (body.name, body.icon, body.filter_trip_type, body.filter_destination, body.filter_length, body.source_id)
+    ).fetchone()
+    template_id = result[0]
+    for i, cat in enumerate(body.categories):
+        cr = conn.execute(
+            "INSERT INTO template_categories (template_id, name, sort_order) VALUES (?, ?, ?) RETURNING id",
+            (template_id, cat.name, i)
+        ).fetchone()
+        cat_id = cr[0]
+        for j, item in enumerate(cat.items):
+            conn.execute(
+                """INSERT INTO template_items (template_category_id, name, quantity, owner_type, sort_order)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (cat_id, item.name, item.quantity, item.owner_type, j)
+            )
+    conn.commit()
+    t = _template_full(conn, template_id)
+    conn.close()
+    return t
+
+
+@router.put("/{template_id}/replace")
+def replace_template(template_id: int, body: TemplateFromPresetBody):
+    conn = database.get_connection()
+    if not conn.execute("SELECT id FROM packing_templates WHERE id = ?", (template_id,)).fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Template not found.")
+    conn.execute(
+        """UPDATE packing_templates SET name = ?, icon = ?, filter_trip_type = ?,
+           filter_destination = ?, filter_length = ?, source_id = ?, updated_at = datetime('now') WHERE id = ?""",
+        (body.name, body.icon, body.filter_trip_type, body.filter_destination, body.filter_length, body.source_id, template_id)
+    )
+    # Delete all categories (cascades to items)
+    conn.execute("DELETE FROM template_categories WHERE template_id = ?", (template_id,))
+    for i, cat in enumerate(body.categories):
+        cr = conn.execute(
+            "INSERT INTO template_categories (template_id, name, sort_order) VALUES (?, ?, ?) RETURNING id",
+            (template_id, cat.name, i)
+        ).fetchone()
+        cat_id = cr[0]
+        for j, item in enumerate(cat.items):
+            conn.execute(
+                """INSERT INTO template_items (template_category_id, name, quantity, owner_type, sort_order)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (cat_id, item.name, item.quantity, item.owner_type, j)
+            )
+    conn.commit()
+    t = _template_full(conn, template_id)
+    conn.close()
+    return t

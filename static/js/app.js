@@ -16,6 +16,13 @@ async function apiFetch(method, path, body) {
   return data;
 }
 
+/* ── FAB context ─────────────────────────────────────────── */
+window._fabCtx = {};
+window.setFabContext = function(ctx) {
+  Object.assign(window._fabCtx, ctx);
+  if (typeof _fabRenderCtxPill === 'function') _fabRenderCtxPill();
+};
+
 /* ── Page router ─────────────────────────────────────────── */
 const PAGE_LOADERS = {};
 
@@ -25,6 +32,9 @@ function registerPage(name, fn) {
 
 function loadPage(page, pushState = true) {
   const content = document.getElementById('content');
+
+  // Reset FAB context to page-level on every navigation
+  window._fabCtx = { page };
 
   // Update body class for accent color
   document.body.className = 'page-' + page;
@@ -265,6 +275,14 @@ function closeModal(overlayEl) {
   overlayEl.classList.remove('open');
 }
 
+// Only dismiss when both mousedown AND mouseup/click started on the backdrop,
+// preventing accidental closes from click-drags that begin inside the modal.
+function addOverlayDismiss(overlay, fn) {
+  let _downOnBackdrop = false;
+  overlay.addEventListener('mousedown', e => { _downOnBackdrop = e.target === overlay; });
+  overlay.addEventListener('click', e => { if (e.target === overlay && _downOnBackdrop) fn(); });
+}
+
 function createModal(title, bodyHTML, onSubmit, submitLabel = 'Save') {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -284,7 +302,7 @@ function createModal(title, bodyHTML, onSubmit, submitLabel = 'Save') {
   const _dismiss = () => { closeModal(overlay); overlay.remove(); };
   overlay.querySelector('.modal-close').addEventListener('click', _dismiss);
   overlay.querySelector('.modal-cancel-btn').addEventListener('click', _dismiss);
-  overlay.addEventListener('click', e => { if (e.target === overlay) _dismiss(); });
+  addOverlayDismiss(overlay, _dismiss);
   overlay.querySelector('.modal-submit-btn').addEventListener('click', async () => {
     const result = await onSubmit(overlay);
     if (result !== false) _dismiss();

@@ -9,6 +9,33 @@ python main.py
 # → http://127.0.0.1:8000
 ```
 
+## Testing
+
+```bash
+# Run all tests
+python -m pytest tests/ -q
+
+# Run a single test file
+python -m pytest tests/test_packing_templates.py -v
+```
+
+**Infrastructure:** `pytest` + `httpx` + FastAPI `TestClient`. Each test gets an isolated in-memory SQLite DB via `monkeypatch.setattr("config.DB_PATH", ...)` in `tests/conftest.py`.
+
+**Test files:**
+| File | Covers |
+|------|--------|
+| `tests/test_packing_templates.py` | Packing template CRUD, from-preset bulk create, replace, category/item sub-resources |
+| `tests/test_trip_packing.py` | apply-inline-preset (single + per_list mode), gender routing, merge/replace, apply-template |
+| `tests/test_project_templates.py` | Project template CRUD with filter fields (source_id, filter_trip_type, filter_destination, filter_length) |
+
+**Key fixtures (conftest.py):**
+- `client` — TestClient with temp DB; fresh per test
+- `trip` — 7-day trip created via POST /api/trips
+- `weekend_trip` — 2-day trip
+- `SIMPLE_PRESET_CATEGORIES` — preset data with all four `owner_type` values
+
+**Important:** `create_trip` automatically creates `DEFAULT_PACKING_CATEGORIES` (`Clothing`, `Toiletries`, `Electronics`, `Documents`, `Medication`, `Miscellaneous`). Tests must look up packing categories **by name**, not by index, since these empty defaults are always present.
+
 Windows auto-start: `setup_task_scheduler.bat` registers a logon-triggered Task Scheduler task that silently runs `start.pyw`.
 
 ## Tech stack

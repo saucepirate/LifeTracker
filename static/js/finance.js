@@ -76,6 +76,7 @@ registerPage('finance', async function(content) {
     t.addEventListener('click', () => _setFinView(t.dataset.view));
   });
 
+  if (window.setFabContext) window.setFabContext({ page: 'finance' });
   _setFinView('overview');
 });
 
@@ -848,7 +849,7 @@ function _openTxnEditModal(tid, currentCatId) {
   const dismiss = () => { overlay.classList.remove('open'); setTimeout(() => overlay.remove(), 150); };
   overlay.querySelector('.modal-close').addEventListener('click', dismiss);
   overlay.querySelector('.modal-cancel-btn').addEventListener('click', dismiss);
-  overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+  addOverlayDismiss(overlay, dismiss);
 
   overlay.querySelector('#ftx-edit-rule').addEventListener('change', function() {
     overlay.querySelector('#ftx-rule-opts').style.display = this.checked ? '' : 'none';

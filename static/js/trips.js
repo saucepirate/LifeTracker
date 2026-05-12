@@ -20,8 +20,9 @@ function tripColorHex(name) {
   return TRIP_COLOR_HEX[name] || TRIP_COLOR_HEX.blue;
 }
 
-let _currentTrip = null;
-let _currentTab  = 'overview';
+let _currentTrip             = null;
+let _currentTab              = 'overview';
+let _tripWorkspaceContainer  = null;
 
 // ── Page registration ──────────────────────────────────────────
 
@@ -58,7 +59,10 @@ async function _renderList(container) {
   container.innerHTML = `
     <div class="trips-page-header">
       <h1 class="page-title">Trips</h1>
-      <button class="btn btn-primary" id="new-trip-btn">+ New Trip</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" id="manage-packing-templates-btn">Packing Templates</button>
+        <button class="btn btn-primary" id="new-trip-btn">+ New Trip</button>
+      </div>
     </div>
     ${_sectionHTML('Upcoming', data.upcoming)}
     ${_sectionHTML('Planning', data.planning)}
@@ -66,6 +70,7 @@ async function _renderList(container) {
   `;
 
   container.querySelector('#new-trip-btn').addEventListener('click', () => _openCreateModal(container));
+  container.querySelector('#manage-packing-templates-btn').addEventListener('click', () => _openPackingMgrModal(container));
 
   container.querySelectorAll('.trip-card').forEach(card => {
     card.addEventListener('click', () => _openWorkspace(container, parseInt(card.dataset.id)));
@@ -250,8 +255,20 @@ async function _loadWorkspace(container, tripId) {
     container.innerHTML = `<div class="empty-state"><p class="empty-state-text">${escHtml(e.message)}</p></div>`;
     return;
   }
-  _currentTrip = trip;
+  _currentTrip            = trip;
+  _tripWorkspaceContainer = container;
+  window.setFabContext({ tripId: trip.id, tripName: trip.name, tripProjectId: trip.project_id || null, tripTagId: trip.tag_id || null, tagIds: trip.tag_id ? [trip.tag_id] : [], _onAdded: _tripFabRefresh });
   _renderWorkspace(container, trip);
+}
+
+async function _tripFabRefresh() {
+  if (!_currentTrip || !_tripWorkspaceContainer) return;
+  try {
+    const updated = await apiFetch('GET', `/trips/${_currentTrip.id}`);
+    _currentTrip = updated;
+    const tabContent = _tripWorkspaceContainer.querySelector('#trip-tab-content');
+    if (tabContent) _renderTab(tabContent, _currentTrip, _currentTab);
+  } catch(e) { /* non-fatal */ }
 }
 
 function _renderWorkspace(container, trip) {
@@ -623,35 +640,61 @@ async function _unlinkTripProject(tabContent, trip) {
 function _openCreateTripProjectModal(tabContent, trip) {
   const tripVariants = PROJ_TEMPLATES.filter(t => t.tripVariant);
 
-  // Auto-select template based on days until departure
+  // Timeline-based fallback recommendation (planning window only)
   const daysUntil = trip.start_date
     ? Math.ceil((new Date(trip.start_date + 'T00:00:00') - new Date()) / 86400000)
     : 90;
-  const autoId = daysUntil >= 300 ? 'trip_1year'
-               : daysUntil >= 150 ? 'trip_6month'
-               : daysUntil >= 60  ? 'trip_3month'
-               : daysUntil <= 4   ? 'trip_weekend'
-               : 'trip_1month';
+  const tripDurationDays = (trip.start_date && trip.end_date)
+    ? Math.ceil((new Date(trip.end_date + 'T00:00:00') - new Date(trip.start_date + 'T00:00:00')) / 86400000) + 1
+    : null;
+  const isWeekendLength = tripDurationDays != null && tripDurationDays <= 3;
+  // Weekend Getaway recommended only when the trip is actually ≤3 days, not just because departure is soon
+  const timelineAutoId = daysUntil >= 300 ? 'trip_1year'
+                       : daysUntil >= 150 ? 'trip_6month'
+                       : daysUntil >= 60  ? 'trip_3month'
+                       : (isWeekendLength && daysUntil <= 30) ? 'trip_weekend'
+                       : 'trip_1month';
 
-  let selectedTemplateId = autoId;
-  const activeFilters = { lead: 'any', dest: 'any', style: 'any' };
+  const activeFilters = { lead: 'any', dest: 'any', type: 'any', length: 'any' };
+
+  // Returns the best recommended template id given current filters.
+  // Prefers a type-specific template over a generic timeline one when a trip type is selected.
+  function _getRecommendedId() {
+    if (activeFilters.type !== 'any') {
+      const typeMatch = tripVariants.find(t => {
+        const tt = t.filterTripType;
+        return tt && tt !== 'any' &&
+          (Array.isArray(tt) ? tt.includes(activeFilters.type) : tt === activeFilters.type);
+      });
+      if (typeMatch) return typeMatch.id;
+    }
+    return timelineAutoId;
+  }
+
+  let selectedTemplateId = _getRecommendedId();
 
   function _passesFilters(t) {
-    const leadOk  = activeFilters.lead  === 'any' || t.filterLead  === 'any' || t.filterLead  === activeFilters.lead;
-    const destOk  = activeFilters.dest  === 'any' || t.filterDestination === 'any' || t.filterDestination === activeFilters.dest;
-    const styleOk = activeFilters.style === 'any' || t.filterStyle === 'any' || t.filterStyle === activeFilters.style;
-    return leadOk && destOk && styleOk;
+    const leadOk = activeFilters.lead === 'any' || t.filterLead === 'any' || t.filterLead === activeFilters.lead;
+    const destOk = activeFilters.dest === 'any' || t.filterDestination === 'any' || t.filterDestination === activeFilters.dest;
+    const tmplType = t.filterTripType;
+    const typeOk = activeFilters.type === 'any' || !tmplType || tmplType === 'any' ||
+                   (Array.isArray(tmplType) ? tmplType.includes(activeFilters.type) : tmplType === activeFilters.type);
+    const tmplLen = t.filterLength;
+    const lenOk = activeFilters.length === 'any' || !tmplLen || tmplLen === 'any' ||
+                  (Array.isArray(tmplLen) ? tmplLen.includes(activeFilters.length) : tmplLen === activeFilters.length);
+    return leadOk && destOk && typeOk && lenOk;
   }
 
   function _renderTmplGrid(gridEl) {
     const filtered = tripVariants.filter(_passesFilters);
+    const recommendedId = _getRecommendedId();
     if (!filtered.length) {
       gridEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:16px;font-size:13px">No templates match — try different filters.</div>';
       return;
     }
     gridEl.innerHTML = filtered.map(t => `
       <button type="button" class="tpm-tmpl-card${t.id === selectedTemplateId ? ' selected' : ''}" data-tmpl="${t.id}">
-        ${t.id === autoId ? '<span class="tpm-tmpl-badge">Recommended</span>' : ''}
+        ${t.id === recommendedId ? '<span class="tpm-tmpl-badge">Recommended</span>' : ''}
         <div class="tpm-tmpl-icon">${t.icon}</div>
         <div class="tpm-tmpl-name">${escHtml(t.name)}</div>
         <div class="tpm-tmpl-desc">${escHtml(t.description)}</div>
@@ -706,12 +749,29 @@ function _openCreateTripProjectModal(tabContent, trip) {
           </div>
         </div>
         <div class="tpm-filter-group">
-          <span class="tpm-filter-label">Style</span>
-          <div class="tpm-chips" data-group="style">
+          <span class="tpm-filter-label">Trip type</span>
+          <div class="tpm-chips" data-group="type">
             <button type="button" class="tpm-chip active" data-val="any">Any</button>
-            <button type="button" class="tpm-chip" data-val="sightseeing">Sightseeing</button>
-            <button type="button" class="tpm-chip" data-val="relaxation">Relaxation</button>
-            <button type="button" class="tpm-chip" data-val="mixed">Mixed</button>
+            <button type="button" class="tpm-chip" data-val="general">General / Mixed</button>
+            <button type="button" class="tpm-chip" data-val="sightseeing">Sightseeing / City</button>
+            <button type="button" class="tpm-chip" data-val="beach">Beach / Relaxation</button>
+            <button type="button" class="tpm-chip" data-val="camping">Camping</button>
+            <button type="button" class="tpm-chip" data-val="hiking">Hiking / Outdoors</button>
+            <button type="button" class="tpm-chip" data-val="roadtrip">Road Trip</button>
+            <button type="button" class="tpm-chip" data-val="business">Business</button>
+            <button type="button" class="tpm-chip" data-val="event">Event / Conference</button>
+            <button type="button" class="tpm-chip" data-val="family">Family</button>
+            <button type="button" class="tpm-chip" data-val="cruise">Cruise</button>
+          </div>
+        </div>
+        <div class="tpm-filter-group">
+          <span class="tpm-filter-label">Trip length <span style="color:var(--text-muted);font-weight:400">(optional)</span></span>
+          <div class="tpm-chips" data-group="length">
+            <button type="button" class="tpm-chip active" data-val="any">Any</button>
+            <button type="button" class="tpm-chip" data-val="weekend">Weekend (1–3 days)</button>
+            <button type="button" class="tpm-chip" data-val="short">Short (4–6 days)</button>
+            <button type="button" class="tpm-chip" data-val="weeklong">Weeklong (7–10 days)</button>
+            <button type="button" class="tpm-chip" data-val="extended">Extended (11+ days)</button>
           </div>
         </div>
       </div>
@@ -735,13 +795,35 @@ function _openCreateTripProjectModal(tabContent, trip) {
         trip_id:     trip.id,
       });
       const template = PROJ_TEMPLATES.find(t => t.id === selectedTemplateId);
-      if (template) await _projApplyTemplateToProject(proj, template);
+      if (template) await _projApplyTemplateToProject(proj, template, activeFilters.dest);
       const updated = await apiFetch('PUT', `/trips/${trip.id}`, { project_id: proj.id });
       Object.assign(trip, updated);
       _currentTrip = trip;
       closeModal(ov);
       ov.remove();
       await _renderPlanningTab(tabContent, trip);
+      // Propagate planning template's trip type into packing picker pre-filters
+      const packingFilters = _inferPackingFilters(trip);
+      if (template) {
+        const tmplType = template.filterTripType;
+        if (tmplType && tmplType !== 'any') {
+          packingFilters.type = Array.isArray(tmplType) ? tmplType[0] : tmplType;
+        }
+      }
+      _openPackingPickerModal(null, trip, {
+        preFilters: packingFilters,
+        modalTitle: 'Add Packing Lists?',
+        skipLabel: 'Skip for now',
+        onSkip: () => {},
+        onApplied: () => {
+          _currentTab = 'packing';
+          document.querySelectorAll('.trip-tab').forEach(b =>
+            b.classList.toggle('active', b.dataset.tab === 'packing')
+          );
+          const tc = document.getElementById('trip-tab-content');
+          if (tc) renderPackingTab(tc, trip);
+        },
+      });
     } catch(e) {
       if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Create Project'; }
       alert(e.message);
@@ -759,6 +841,10 @@ function _openCreateTripProjectModal(tabContent, trip) {
       group.querySelectorAll('.tpm-chip').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       activeFilters[key] = btn.dataset.val;
+      // When trip type changes, auto-select the recommended template for that type
+      if (key === 'type') {
+        selectedTemplateId = _getRecommendedId();
+      }
       _renderTmplGrid(gridEl);
     });
   });
@@ -803,6 +889,20 @@ async function _openLinkTripProjectModal(tabContent, trip) {
       closeModal(ov);
       ov.remove();
       await _renderPlanningTab(tabContent, trip);
+      _openPackingPickerModal(null, trip, {
+        preFilters: _inferPackingFilters(trip),
+        modalTitle: 'Add Packing Lists?',
+        skipLabel: 'Skip for now',
+        onSkip: () => {},
+        onApplied: () => {
+          _currentTab = 'packing';
+          document.querySelectorAll('.trip-tab').forEach(b =>
+            b.classList.toggle('active', b.dataset.tab === 'packing')
+          );
+          const tc = document.getElementById('trip-tab-content');
+          if (tc) renderPackingTab(tc, trip);
+        },
+      });
     } catch(e) { alert(e.message); }
     return false;
   }, 'Link Project');
@@ -817,6 +917,55 @@ async function _openLinkTripProjectModal(tabContent, trip) {
   });
 
   openModal(overlay);
+}
+
+// ── Packing filter inference ──
+
+function _inferPackingFilters(trip) {
+  const filters = {};
+  if (trip.start_date && trip.end_date) {
+    const days = Math.round((new Date(trip.end_date) - new Date(trip.start_date)) / 86400000) + 1;
+    if (days <= 3) filters.length = 'weekend';
+    else if (days <= 6) filters.length = 'short';
+    else if (days <= 10) filters.length = 'weeklong';
+    else filters.length = 'extended';
+  }
+  return filters;
+}
+
+// ── Packing setup prompt (shown after planning project setup) ──
+
+function _promptPackingSetup(tabContent, trip) {
+  if (document.getElementById('trip-packing-prompt')) return; // already showing
+  const banner = document.createElement('div');
+  banner.id = 'trip-packing-prompt';
+  banner.className = 'trip-packing-setup-prompt';
+  banner.innerHTML = `
+    <span class="trip-pack-prompt-icon">🎒</span>
+    <div class="trip-pack-prompt-text">
+      <strong>Set up packing lists?</strong>
+      <span class="trip-pack-prompt-sub">Apply a preset to quickly build packing lists for this trip.</span>
+    </div>
+    <button class="btn btn-secondary btn-sm" id="trip-pack-prompt-btn">Browse packing templates →</button>
+    <button class="btn btn-icon" id="trip-pack-prompt-dismiss" title="Dismiss">✕</button>
+  `;
+  tabContent.insertBefore(banner, tabContent.firstChild);
+
+  banner.querySelector('#trip-pack-prompt-btn').addEventListener('click', () => {
+    banner.remove();
+    _openPackingPickerModal(null, trip, {
+      onApplied: () => {
+        _currentTab = 'packing';
+        document.querySelectorAll('.trip-tab').forEach(b =>
+          b.classList.toggle('active', b.dataset.tab === 'packing')
+        );
+        const tc = document.getElementById('trip-tab-content');
+        if (tc) renderPackingTab(tc, trip);
+      },
+    });
+  });
+
+  banner.querySelector('#trip-pack-prompt-dismiss').addEventListener('click', () => banner.remove());
 }
 
 // ── Tasks tab ─────────────────────────────────────────────────

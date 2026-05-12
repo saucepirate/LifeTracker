@@ -584,7 +584,14 @@ function openGDetail(goalId) {
     c.classList.toggle('selected', parseInt(c.dataset.id) === goalId)
   );
   const g = _goals.find(g => g.id === goalId);
-  if (g) renderGDetail(g);
+  if (g) {
+    window.setFabContext({
+      goalId:   g.id,
+      goalName: g.title,
+      tagIds:   (g.tags || []).map(t => t.id),
+    });
+    renderGDetail(g);
+  }
 }
 
 function closeGDetail() {
@@ -592,6 +599,7 @@ function closeGDetail() {
   document.querySelectorAll('.goal-card.selected').forEach(c => c.classList.remove('selected'));
   const pane = document.getElementById('goals-detail-pane');
   if (pane) { pane.classList.remove('open'); pane.innerHTML = ''; }
+  if (window.setFabContext) window.setFabContext({ goalId: null, goalName: null, tagIds: [] });
 }
 
 function renderGDetail(g) {

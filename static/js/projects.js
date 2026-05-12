@@ -2,6 +2,8 @@
 
 let _projects        = [];
 let _projectDetail   = null;
+let _projCustomTemplates = [];
+let _projDetailEl    = null;   // cached container for FAB refresh
 let _projFilter      = 'active';
 let _projShowCompleted = false;
 let _projDetailTab    = 'overview';
@@ -159,7 +161,7 @@ const PROJ_TEMPLATES = [
     tripVariant: true,
     leadLabel: '1 Year',
     leadDays: 365,
-    filterLead: '1year', filterDuration: 'any', filterDestination: 'any', filterStyle: 'any',
+    filterLead: '1year', filterLength: 'any', filterDestination: 'any', filterTripType: 'any',
     milestones: [
       { title: 'Dream & Research',          ref: 'deadline', offset: -360, is_deliverable: false },
       { title: 'Documentation & Finances',  ref: 'deadline', offset: -270, is_deliverable: false },
@@ -172,9 +174,9 @@ const PROJ_TEMPLATES = [
       { title: 'Research destinations and dream itinerary',  milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -355 },
       { title: 'Set overall travel budget',                  milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -350 },
       { title: 'Open or fund a travel savings account',      milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -270 },
-      { title: 'Check passport expiry — renew if needed',    milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -300 },
-      { title: 'Research visa requirements',                 milestone: 1, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -280 },
-      { title: 'Apply for visas',                            milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -240 },
+      { title: 'Check passport expiry — renew if needed',    milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -300, dest: 'international' },
+      { title: 'Research visa requirements',                 milestone: 1, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -280, dest: 'international' },
+      { title: 'Apply for visas',                            milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -240, dest: 'international' },
       { title: 'Book flights',                               milestone: 2, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -150 },
       { title: 'Book accommodations',                        milestone: 2, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -135 },
       { title: 'Book car rental or ground transport',        milestone: 2, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -120 },
@@ -197,7 +199,7 @@ const PROJ_TEMPLATES = [
     tripVariant: true,
     leadLabel: '6 Months',
     leadDays: 180,
-    filterLead: '6month', filterDuration: 'any', filterDestination: 'any', filterStyle: 'any',
+    filterLead: '6month', filterLength: 'any', filterDestination: 'any', filterTripType: 'any',
     milestones: [
       { title: 'Research & Documentation', ref: 'deadline', offset: -175, is_deliverable: false },
       { title: 'Bookings Complete',        ref: 'deadline', offset: -120, is_deliverable: false },
@@ -207,8 +209,8 @@ const PROJ_TEMPLATES = [
     ],
     tasks: [
       { title: 'Research destinations and set budget',  milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -170 },
-      { title: 'Check passport expiry — renew if needed', milestone: 0, priority: 'high', task_type: 'todo',     ref: 'deadline', offset: -165 },
-      { title: 'Research and apply for visas',          milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -150 },
+      { title: 'Check passport expiry — renew if needed', milestone: 0, priority: 'high', task_type: 'todo',     ref: 'deadline', offset: -165, dest: 'international' },
+      { title: 'Research and apply for visas',          milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -150, dest: 'international' },
       { title: 'Book flights',                          milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -120 },
       { title: 'Book accommodations',                   milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -105 },
       { title: 'Book car rental or ground transport',   milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -90  },
@@ -231,7 +233,7 @@ const PROJ_TEMPLATES = [
     tripVariant: true,
     leadLabel: '3 Months',
     leadDays: 90,
-    filterLead: '3month', filterDuration: 'any', filterDestination: 'any', filterStyle: 'any',
+    filterLead: '3month', filterLength: 'any', filterDestination: 'any', filterTripType: 'any',
     milestones: [
       { title: 'Research & Decisions',  ref: 'deadline', offset: -90, is_deliverable: false },
       { title: 'Bookings Complete',     ref: 'deadline', offset: -60, is_deliverable: false },
@@ -241,7 +243,7 @@ const PROJ_TEMPLATES = [
     tasks: [
       { title: 'Define trip dates and budget',              milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -90 },
       { title: 'Research destinations and activities',      milestone: 0, priority: 'medium', task_type: 'research', ref: 'deadline', offset: -85 },
-      { title: 'Check passport / visa requirements',        milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -80 },
+      { title: 'Check passport / visa requirements',        milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -80, dest: 'international' },
       { title: 'Book flights',                              milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -60 },
       { title: 'Book accommodations',                       milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -55 },
       { title: 'Book car rental or ground transport',       milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -50 },
@@ -264,7 +266,7 @@ const PROJ_TEMPLATES = [
     tripVariant: true,
     leadLabel: '1 Month',
     leadDays: 30,
-    filterLead: '1month', filterDuration: 'any', filterDestination: 'any', filterStyle: 'any',
+    filterLead: '1month', filterLength: 'any', filterDestination: 'any', filterTripType: 'any',
     milestones: [
       { title: 'Book Immediately',    ref: 'deadline', offset: -28, is_deliverable: false },
       { title: 'Pre-Trip Logistics',  ref: 'deadline', offset: -7,  is_deliverable: false },
@@ -274,7 +276,7 @@ const PROJ_TEMPLATES = [
       { title: 'Book flights (if not already done)',           milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -28 },
       { title: 'Book accommodations (if not already done)',    milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -25 },
       { title: 'Purchase travel insurance',                    milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -20 },
-      { title: 'Check passport / visa requirements',           milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -20 },
+      { title: 'Check passport / visa requirements',           milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -20, dest: 'international' },
       { title: 'Plan itinerary',                               milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -7  },
       { title: 'Reserve key activities and restaurants',       milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -5  },
       { title: 'Notify bank of travel dates',                  milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7  },
@@ -293,7 +295,7 @@ const PROJ_TEMPLATES = [
     tripVariant: true,
     leadLabel: 'Weekend',
     leadDays: 14,
-    filterLead: '1month', filterDuration: 'short', filterDestination: 'domestic', filterStyle: 'mixed',
+    filterLead: '1month', filterLength: 'weekend', filterDestination: 'domestic', filterTripType: ['general', 'roadtrip'],
     milestones: [
       { title: 'Book & Prepare',  ref: 'deadline', offset: -14, is_deliverable: false },
       { title: 'Packed & Ready',  ref: 'deadline', offset: -1,  is_deliverable: true  },
@@ -305,6 +307,7 @@ const PROJ_TEMPLATES = [
       { title: 'Research things to do',                   milestone: 0, priority: 'medium', task_type: 'research', ref: 'deadline', offset: -7  },
       { title: 'Make restaurant reservations',            milestone: 0, priority: 'low',    task_type: 'purchase', ref: 'deadline', offset: -5  },
       { title: 'Download offline maps',                   milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -2  },
+      { title: 'Check weather forecast',                  milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -2  },
       { title: 'Pack bags',                               milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
       { title: 'Confirm check-in details',                milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -1  },
     ],
@@ -319,7 +322,7 @@ const PROJ_TEMPLATES = [
     tripVariant: true,
     leadLabel: 'International',
     leadDays: 120,
-    filterLead: '6month', filterDuration: 'any', filterDestination: 'international', filterStyle: 'mixed',
+    filterLead: '6month', filterLength: 'any', filterDestination: 'international', filterTripType: 'any',
     milestones: [
       { title: 'Documents & Visas',  ref: 'deadline', offset: -120, is_deliverable: false },
       { title: 'Flights & Hotels',   ref: 'deadline', offset: -90,  is_deliverable: false },
@@ -330,20 +333,21 @@ const PROJ_TEMPLATES = [
     tasks: [
       { title: 'Check passport — 6+ months validity required',    milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -120 },
       { title: 'Research visa requirements',                       milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -115 },
-      { title: 'Apply for visa / travel authorization (ETA etc)',  milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -100 },
-      { title: 'Register travel with home country embassy',        milestone: 0, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -90  },
+      { title: 'Apply for visa / travel authorization if required',  milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -100 },
+      { title: 'Register travel with home country embassy if recommended', milestone: 0, priority: 'medium', task_type: 'todo', ref: 'deadline', offset: -90 },
       { title: 'Book flights',                                     milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -90  },
       { title: 'Book accommodations',                              milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -75  },
       { title: 'Purchase travel insurance',                        milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -60  },
-      { title: 'Book airport transfers',                           milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -45  },
+      { title: 'Book airport transfers if needed',                 milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -45  },
       { title: 'Notify bank — get a travel card or local currency',milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -45  },
       { title: 'Check health requirements (vaccines, pills)',      milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -45  },
       { title: 'Get travel vaccinations if required',              milestone: 2, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -30  },
       { title: 'Plan detailed itinerary',                          milestone: 2, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -30  },
       { title: 'Reserve key activities and tours',                 milestone: 2, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -21  },
-      { title: 'Confirm all bookings and save copies',             milestone: 3, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7   },
+      { title: 'Set up international phone plan or eSIM',          milestone: 3, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -14  },
+      { title: 'Save / download all booking confirmations',        milestone: 3, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7   },
       { title: 'Pack bags',                                        milestone: 4, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -2   },
-      { title: 'Check in online and download boarding passes',     milestone: 4, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1   },
+      { title: 'Check in online if flying',                        milestone: 4, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1   },
     ],
     note: { title: 'International Trip Notes', content: '<h2>Visa & Documents</h2><p><br></p><h2>Confirmations</h2><p><br></p><h2>Emergency Contacts</h2><p><br></p><h2>Currency & Budget</h2><p><br></p>' },
   },
@@ -356,7 +360,7 @@ const PROJ_TEMPLATES = [
     tripVariant: true,
     leadLabel: 'Sightseeing',
     leadDays: 60,
-    filterLead: '3month', filterDuration: 'any', filterDestination: 'any', filterStyle: 'sightseeing',
+    filterLead: '3month', filterLength: 'any', filterDestination: 'any', filterTripType: 'sightseeing',
     milestones: [
       { title: 'Research & Wishlist',   ref: 'deadline', offset: -60, is_deliverable: false },
       { title: 'Book Tickets & Tours',  ref: 'deadline', offset: -30, is_deliverable: false },
@@ -367,13 +371,14 @@ const PROJ_TEMPLATES = [
       { title: 'Build wishlist of must-see sites and museums',    milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -60 },
       { title: 'Research opening hours and admission prices',     milestone: 0, priority: 'medium', task_type: 'research', ref: 'deadline', offset: -55 },
       { title: 'Set sightseeing budget',                          milestone: 0, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -50 },
-      { title: 'Book flights and accommodation',                  milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -45 },
+      { title: 'Book flights if flying and accommodation',         milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -45 },
       { title: 'Buy museum / attraction passes',                  milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -30 },
       { title: 'Book guided tours or experiences',                milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -21 },
       { title: 'Reserve restaurants near key attractions',        milestone: 1, priority: 'low',    task_type: 'purchase', ref: 'deadline', offset: -14 },
       { title: 'Plan day-by-day itinerary',                       milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7  },
       { title: 'Download city maps and transit apps offline',     milestone: 2, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -5  },
-      { title: 'Confirm tour bookings',                           milestone: 2, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -3  },
+      { title: 'Check weather forecast',                          milestone: 2, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -5  },
+      { title: 'Save / download tour and attraction confirmations', milestone: 2, priority: 'medium', task_type: 'todo',   ref: 'deadline', offset: -3  },
       { title: 'Pack comfortable walking shoes and day bag',      milestone: 3, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
     ],
     note: { title: 'Sightseeing Planner', content: '<h2>Must-See List</h2><p><br></p><h2>Tour Bookings</h2><p><br></p><h2>Day-by-Day Plan</h2><p><br></p><h2>Local Tips</h2><p><br></p>' },
@@ -387,7 +392,7 @@ const PROJ_TEMPLATES = [
     tripVariant: true,
     leadLabel: 'Relaxation',
     leadDays: 45,
-    filterLead: '3month', filterDuration: 'any', filterDestination: 'any', filterStyle: 'relaxation',
+    filterLead: '3month', filterLength: 'any', filterDestination: 'any', filterTripType: 'beach',
     milestones: [
       { title: 'Choose & Book',       ref: 'deadline', offset: -45, is_deliverable: false },
       { title: 'Logistics & Add-ons', ref: 'deadline', offset: -7,  is_deliverable: false },
@@ -396,15 +401,229 @@ const PROJ_TEMPLATES = [
     tasks: [
       { title: 'Research resorts / rental properties',          milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -45 },
       { title: 'Book accommodation',                            milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -40 },
-      { title: 'Book flights',                                  milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -35 },
+      { title: 'Book flights if flying',                        milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -35 },
       { title: 'Purchase travel insurance',                     milestone: 0, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -30 },
-      { title: 'Book spa or wellness treatments',               milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -14 },
-      { title: 'Arrange beach / water activity rentals',        milestone: 1, priority: 'low',    task_type: 'purchase', ref: 'deadline', offset: -10 },
-      { title: 'Notify bank of travel dates',                   milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Book spa or wellness treatments if desired',    milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -14 },
+      { title: 'Arrange beach / water activity rentals if desired', milestone: 1, priority: 'low', task_type: 'purchase', ref: 'deadline', offset: -10 },
+      { title: 'Notify bank if travelling internationally',     milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Check weather forecast',                        milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -5  },
       { title: 'Set out-of-office and disconnect from work',    milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -3  },
       { title: 'Pack light — beach essentials only',            milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
     ],
     note: { title: 'Relaxation Trip Notes', content: '<h2>Resort Details</h2><p><br></p><h2>Planned Activities</h2><p><br></p><h2>What to Pack</h2><p><br></p>' },
+  },
+  {
+    id: 'trip_family',
+    name: 'Family Trip',
+    icon: '👨‍👩‍👧‍👦',
+    description: 'Travel with children — kid-friendly destinations, activities for all ages, and family logistics',
+    color: 'amber',
+    tripVariant: true,
+    leadLabel: 'Family',
+    leadDays: 60,
+    filterLead: '3month', filterLength: 'any', filterDestination: 'any', filterTripType: 'family',
+    milestones: [
+      { title: 'Research & Book',  ref: 'deadline', offset: -60, is_deliverable: false },
+      { title: 'Pack & Prep',      ref: 'deadline', offset: -7,  is_deliverable: false },
+      { title: 'Packed & Ready',   ref: 'deadline', offset: -1,  is_deliverable: true  },
+    ],
+    tasks: [
+      { title: 'Research kid-friendly destinations and activities',      milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -60 },
+      { title: 'Book accommodation — confirm family rooms or cribs available', milestone: 0, priority: 'high', task_type: 'purchase', ref: 'deadline', offset: -55 },
+      { title: 'Book flights if flying — check child fare and seat rules', milestone: 0, priority: 'high',  task_type: 'purchase', ref: 'deadline', offset: -50 },
+      { title: 'Purchase travel insurance',                              milestone: 0, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -45 },
+      { title: 'Plan activities and downtime suitable for all ages',     milestone: 0, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -30 },
+      { title: 'Reserve family-friendly restaurants',                    milestone: 0, priority: 'low',    task_type: 'purchase', ref: 'deadline', offset: -21 },
+      { title: 'Pack medications, first aid, and child health supplies', milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Arrange travel entertainment for kids',                  milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -5  },
+      { title: 'Notify bank if travelling internationally',              milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -5  },
+      { title: 'Save / download all booking confirmations',              milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -3  },
+      { title: 'Pack bags — check car seats and strollers if needed',   milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
+      { title: 'Check in online if flying',                              milestone: 2, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -1  },
+    ],
+    note: { title: 'Family Trip Notes', content: '<h2>Destination Ideas</h2><p><br></p><h2>Activity Plan</h2><p><br></p><h2>Packing List</h2><p><br></p><h2>What Kids Need</h2><p><br></p>' },
+  },
+  {
+    id: 'trip_roadtrip',
+    name: 'Road Trip',
+    icon: '🚙',
+    description: 'Drive-based adventure: route planning, overnight stops, and vehicle prep',
+    color: 'green',
+    tripVariant: true,
+    leadLabel: 'Road Trip',
+    leadDays: 21,
+    filterLead: '1month', filterLength: 'any', filterDestination: 'domestic', filterTripType: 'roadtrip',
+    milestones: [
+      { title: 'Plan Route & Book Stops', ref: 'deadline', offset: -21, is_deliverable: false },
+      { title: 'Vehicle & Packing Prep',  ref: 'deadline', offset: -3,  is_deliverable: false },
+      { title: 'Ready to Roll',           ref: 'deadline', offset: -1,  is_deliverable: true  },
+    ],
+    tasks: [
+      { title: 'Choose route and key destinations',           milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -21 },
+      { title: 'Book overnight stops and accommodation',      milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -18 },
+      { title: 'Research points of interest along the route', milestone: 0, priority: 'medium', task_type: 'research', ref: 'deadline', offset: -14 },
+      { title: 'Download offline maps for the route',         milestone: 0, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Book restaurant reservations at key stops',   milestone: 0, priority: 'low',    task_type: 'purchase', ref: 'deadline', offset: -7  },
+      { title: 'Check vehicle — tyres, oil, fluids, wipers',  milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -3  },
+      { title: 'Check weather forecast for the route',        milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -3  },
+      { title: 'Pack roadside emergency kit',                 milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -2  },
+      { title: 'Save / download accommodation confirmations', milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -2  },
+      { title: 'Pack bags and load the car',                  milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
+    ],
+    note: { title: 'Road Trip Notes', content: '<h2>Route Plan</h2><p><br></p><h2>Overnight Stops</h2><p><br></p><h2>Points of Interest</h2><p><br></p><h2>Packing List</h2><p><br></p>' },
+  },
+  {
+    id: 'trip_business',
+    name: 'Business Trip',
+    icon: '💼',
+    description: 'Work travel: meetings, presentations, expense tracking, and professional prep',
+    color: 'blue',
+    tripVariant: true,
+    leadLabel: 'Business',
+    leadDays: 21,
+    filterLead: '1month', filterLength: 'any', filterDestination: 'any', filterTripType: 'business',
+    milestones: [
+      { title: 'Book & Confirm Travel', ref: 'deadline', offset: -21, is_deliverable: false },
+      { title: 'Prepare Materials',     ref: 'deadline', offset: -3,  is_deliverable: false },
+      { title: 'Ready for Departure',   ref: 'deadline', offset: -1,  is_deliverable: true  },
+    ],
+    tasks: [
+      { title: 'Confirm meeting schedule and agenda',              milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -21 },
+      { title: 'Check company travel policy and expense requirements', milestone: 0, priority: 'medium', task_type: 'todo', ref: 'deadline', offset: -21 },
+      { title: 'Book flights if flying',                            milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -21 },
+      { title: 'Book hotel near venue',                             milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -18 },
+      { title: 'Arrange ground transport / airport transfer if needed', milestone: 0, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -14 },
+      { title: 'Prepare presentation and materials',                milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -3  },
+      { title: 'Pack business attire — confirm dress code requirements', milestone: 1, priority: 'high', task_type: 'todo', ref: 'deadline', offset: -2  },
+      { title: 'Charge devices and set up VPN / adapters',          milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -1  },
+      { title: 'Save / download hotel and flight confirmations',    milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -1  },
+      { title: 'Set up expense tracking and receipts system',       milestone: 1, priority: 'low',    task_type: 'todo',     ref: 'deadline', offset: -1  },
+      { title: 'Check in online if flying',                         milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
+    ],
+    note: { title: 'Business Trip Notes', content: '<h2>Meeting Schedule</h2><p><br></p><h2>Key Contacts</h2><p><br></p><h2>Expenses</h2><p><br></p><h2>Notes</h2><p><br></p>' },
+  },
+  {
+    id: 'trip_cruise',
+    name: 'Cruise',
+    icon: '🚢',
+    description: 'Port logistics, shore excursions, onboard prep, and embarkation planning',
+    color: 'blue',
+    tripVariant: true,
+    leadLabel: 'Cruise',
+    leadDays: 90,
+    filterLead: '3month', filterLength: 'any', filterDestination: 'any', filterTripType: 'cruise',
+    milestones: [
+      { title: 'Book & Documents',     ref: 'deadline', offset: -90, is_deliverable: false },
+      { title: 'Pre-Cruise Logistics', ref: 'deadline', offset: -30, is_deliverable: false },
+      { title: 'Shore Excursions',     ref: 'deadline', offset: -14, is_deliverable: false },
+      { title: 'Packed & Ready',       ref: 'deadline', offset: -1,  is_deliverable: true  },
+    ],
+    tasks: [
+      { title: 'Book cruise and cabin category',                   milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -90 },
+      { title: 'Check passport — 6+ months validity; research visa requirements', milestone: 0, priority: 'high', task_type: 'todo', ref: 'deadline', offset: -85 },
+      { title: 'Purchase travel insurance',                        milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -80 },
+      { title: 'Complete online check-in with cruise line',        milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -30 },
+      { title: 'Book flights if flying to embarkation port',       milestone: 1, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -30 },
+      { title: 'Arrange pre/post-cruise accommodation if needed',  milestone: 1, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -25 },
+      { title: 'Notify bank if travelling internationally',        milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -21 },
+      { title: 'Book shore excursions for key ports',              milestone: 2, priority: 'medium', task_type: 'purchase', ref: 'deadline', offset: -14 },
+      { title: 'Confirm specialty dining reservations',            milestone: 2, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -10 },
+      { title: 'Research onboard activities and spa packages',     milestone: 2, priority: 'low',    task_type: 'research', ref: 'deadline', offset: -7  },
+      { title: 'Pack bags — check cruise dress code requirements', milestone: 3, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -2  },
+      { title: 'Save / download boarding passes and cruise documents', milestone: 3, priority: 'high', task_type: 'todo',  ref: 'deadline', offset: -1  },
+    ],
+    note: { title: 'Cruise Notes', content: '<h2>Booking Confirmations</h2><p><br></p><h2>Port Itinerary</h2><p><br></p><h2>Shore Excursions</h2><p><br></p><h2>Budget</h2><p><br></p>' },
+  },
+  {
+    id: 'trip_event',
+    name: 'Event / Conference',
+    icon: '🎟️',
+    description: 'Travel for a specific event: wedding, conference, concert, or ceremony',
+    color: 'amber',
+    tripVariant: true,
+    leadLabel: 'Event',
+    leadDays: 30,
+    filterLead: '1month', filterLength: 'any', filterDestination: 'any', filterTripType: 'event',
+    milestones: [
+      { title: 'Register & Book Travel', ref: 'deadline', offset: -30, is_deliverable: false },
+      { title: 'Prepare & Pack',         ref: 'deadline', offset: -3,  is_deliverable: false },
+      { title: 'Ready to Go',            ref: 'deadline', offset: -1,  is_deliverable: true  },
+    ],
+    tasks: [
+      { title: 'Register for event / confirm invitation',        milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -30 },
+      { title: 'Request time off work if needed',               milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -30 },
+      { title: 'Book flights if flying or arrange transport',   milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -28 },
+      { title: 'Book accommodation near venue',                 milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -25 },
+      { title: 'Confirm schedule and venue details',            milestone: 0, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -14 },
+      { title: 'Plan outfit or formal attire',                  milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Arrange gift or card if applicable',            milestone: 1, priority: 'low',    task_type: 'todo',     ref: 'deadline', offset: -5  },
+      { title: 'Save / download travel and event confirmations',milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -2  },
+      { title: 'Pack bags',                                     milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
+      { title: 'Check in online if flying',                     milestone: 2, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -1  },
+    ],
+    note: { title: 'Event Notes', content: '<h2>Event Details</h2><p><br></p><h2>Travel Bookings</h2><p><br></p><h2>What to Bring</h2><p><br></p>' },
+  },
+  {
+    id: 'trip_camping',
+    name: 'Camping Trip',
+    icon: '🏕️',
+    description: 'Campsite stays with overnight setup, cooking outdoors, and wilderness prep',
+    color: 'green',
+    tripVariant: true,
+    leadLabel: 'Camping',
+    leadDays: 30,
+    filterLead: '1month', filterLength: 'any', filterDestination: 'any', filterTripType: 'camping',
+    milestones: [
+      { title: 'Plan & Book',    ref: 'deadline', offset: -30, is_deliverable: false },
+      { title: 'Gear & Prep',    ref: 'deadline', offset: -7,  is_deliverable: false },
+      { title: 'Packed & Ready', ref: 'deadline', offset: -1,  is_deliverable: true  },
+    ],
+    tasks: [
+      { title: 'Choose campsite and confirm trip dates',               milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -30 },
+      { title: 'Book campsite reservation',                            milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -28 },
+      { title: 'Obtain permits or passes if required',                 milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -21 },
+      { title: 'Research campground rules, amenities, and facilities', milestone: 0, priority: 'medium', task_type: 'research', ref: 'deadline', offset: -14 },
+      { title: 'Plan route and arrival timing',                        milestone: 0, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -14 },
+      { title: 'Check weather and fire / burn restrictions',           milestone: 1, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -7  },
+      { title: 'Plan meals and pack food and cooking supplies',        milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Check and service all camping gear',                   milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Download offline campground and area maps',            milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -5  },
+      { title: 'Pack water and food storage — bear canister if required', milestone: 1, priority: 'high', task_type: 'todo',   ref: 'deadline', offset: -3  },
+      { title: 'Pack waste kit and plan Leave No Trace',               milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -2  },
+      { title: 'Pack first aid and safety kit',                        milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -2  },
+      { title: 'Notify someone of your itinerary and return time',     milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
+      { title: 'Final pack and load the car',                          milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
+    ],
+    note: { title: 'Camping Notes', content: '<h2>Campsite Info</h2><p><br></p><h2>Gear List</h2><p><br></p><h2>Meal Plan</h2><p><br></p><h2>Emergency Plan</h2><p><br></p>' },
+  },
+  {
+    id: 'trip_hiking',
+    name: 'Hiking & Outdoors',
+    icon: '🥾',
+    description: 'Day hikes, multi-day backpacking, and trail-focused outdoor trips',
+    color: 'green',
+    tripVariant: true,
+    leadLabel: 'Hiking',
+    leadDays: 21,
+    filterLead: '1month', filterLength: 'any', filterDestination: 'any', filterTripType: 'hiking',
+    milestones: [
+      { title: 'Research & Plan',     ref: 'deadline', offset: -21, is_deliverable: false },
+      { title: 'Gear & Prep',         ref: 'deadline', offset: -7,  is_deliverable: false },
+      { title: 'Ready to Head Out',   ref: 'deadline', offset: -1,  is_deliverable: true  },
+    ],
+    tasks: [
+      { title: 'Choose trail and research difficulty and distance',      milestone: 0, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -21 },
+      { title: 'Book campsite or obtain trailhead permits if required',  milestone: 0, priority: 'high',   task_type: 'purchase', ref: 'deadline', offset: -14 },
+      { title: 'Download offline trail maps',                            milestone: 0, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -14 },
+      { title: 'Plan route and identify turnaround / bail-out points',   milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Check weather and trail conditions',                     milestone: 1, priority: 'high',   task_type: 'research', ref: 'deadline', offset: -7  },
+      { title: 'Check and service all hiking gear',                      milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -7  },
+      { title: 'Pack first aid and blister / emergency kit',             milestone: 1, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -3  },
+      { title: 'Plan food and water carry — filter or purification tabs',milestone: 1, priority: 'medium', task_type: 'todo',     ref: 'deadline', offset: -2  },
+      { title: 'Pack layers — base, mid, waterproof shell',              milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
+      { title: 'Notify someone of your route and expected return',       milestone: 2, priority: 'high',   task_type: 'todo',     ref: 'deadline', offset: -1  },
+    ],
+    note: { title: 'Hiking Notes', content: '<h2>Trail Info</h2><p><br></p><h2>Gear List</h2><p><br></p><h2>Emergency Plan</h2><p><br></p>' },
   },
   {
     id: 'tracker',
@@ -444,6 +663,37 @@ function _projRelDate(ref, offset, start, deadline) {
   return d.toISOString().slice(0, 10);
 }
 
+function _normalizeProjCustomTemplate(t) {
+  const milestones = typeof t.milestones === 'string' ? JSON.parse(t.milestones || '[]') : (t.milestones || []);
+  const tasks      = typeof t.tasks      === 'string' ? JSON.parse(t.tasks      || '[]') : (t.tasks      || []);
+  const note       = (t.note_title || t.note_content)
+    ? { title: t.note_title || '', content: t.note_content || '' }
+    : null;
+  return { ...t, milestones, tasks, note, _isCustom: true };
+}
+
+const _TMPL_TYPE_MAP  = { beach:'Beach',camping:'Camping',hiking:'Hiking',sightseeing:'Sightseeing',
+                           business:'Business',general:'General',roadtrip:'Road Trip',event:'Event',
+                           family:'Family',cruise:'Cruise' };
+const _TMPL_DEST_MAP  = { domestic:'Domestic',international:'International' };
+const _TMPL_LEN_MAP   = { weekend:'Weekend',short:'Short',weeklong:'1 Week',extended:'Extended' };
+
+function _projFilterBadgesHTML(tripType, dest, len) {
+  const t = Array.isArray(tripType) ? tripType[0] : tripType;
+  const parts = [];
+  if (t   && t   !== 'any') parts.push(_TMPL_TYPE_MAP[t]   || t);
+  if (dest && dest !== 'any') parts.push(_TMPL_DEST_MAP[dest] || dest);
+  if (len  && len  !== 'any') parts.push(_TMPL_LEN_MAP[len]   || len);
+  return parts.map(p => `<span class="pktmpl-filter-badge">${escHtml(p)}</span>`).join('');
+}
+
+async function _projLoadCustomTemplates() {
+  try {
+    const data = await apiFetch('GET', '/projects/templates');
+    _projCustomTemplates = (data.items || []).map(_normalizeProjCustomTemplate);
+  } catch(e) { _projCustomTemplates = []; }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 registerPage('projects', async function(el) {
@@ -481,6 +731,7 @@ function _projRenderList(el) {
         `<button class="proj-filter-btn${_projFilter===f?' active':''}" data-filter="${f}">${f==='active'?'Active':f==='all'?'All':'Completed'}</button>`
       ).join('')}
       <div style="flex:1"></div>
+      <button class="btn btn-secondary" id="proj-manage-templates-btn">Manage Templates</button>
       <button class="btn btn-secondary" id="proj-template-btn">From Template</button>
       <button class="btn btn-primary" id="proj-new-btn">+ New Project</button>
     </div>`;
@@ -500,6 +751,7 @@ function _projRenderList(el) {
     b.addEventListener('click', () => { _projFilter = b.dataset.filter; _projRenderList(el); });
   });
 
+  el.querySelector('#proj-manage-templates-btn').addEventListener('click', () => _projOpenManageTemplatesModal(el));
   el.querySelector('#proj-template-btn').addEventListener('click', () => _projOpenTemplatePickerModal(el));
   el.querySelector('#proj-new-btn').addEventListener('click', () => _projOpenNewModal(el));
 
@@ -668,11 +920,34 @@ async function _projOpenDetail(el, projectId) {
   _projNoteQuill      = null;
   clearTimeout(_projNoteSaveTimer);
   try {
+    _projDetailEl  = el;
     _projectDetail = await apiFetch('GET', `/projects/${projectId}`);
+    window.setFabContext({
+      projectId:         _projectDetail.id,
+      projectName:       _projectDetail.title,
+      projectTripId:     _projectDetail.trip_id || null,
+      projectMilestones: (_projectDetail.milestones || [])
+        .filter(m => m.status !== 'completed')
+        .map(m => ({ id: m.id, title: m.title })),
+      _onAdded: _projFabRefresh,
+    });
     _projRenderDetail(el);
   } catch(e) {
     el.innerHTML = `<div class="empty-state"><p class="empty-state-text">Failed to load project.</p></div>`;
   }
+}
+
+async function _projFabRefresh() {
+  if (!_projectDetail || !_projDetailEl) return;
+  try {
+    _projectDetail = await apiFetch('GET', `/projects/${_projectDetail.id}`);
+    window.setFabContext({
+      projectMilestones: (_projectDetail.milestones || [])
+        .filter(m => m.status !== 'completed')
+        .map(m => ({ id: m.id, title: m.title })),
+    });
+    _projRenderDetail(_projDetailEl);
+  } catch(e) { /* non-fatal */ }
 }
 
 function _projRenderDetail(el) {
@@ -751,7 +1026,10 @@ function _projRenderDetail(el) {
 
   el.innerHTML = `
     <div class="proj-detail-hdr" style="--proj-color:${color}">
-      <button class="proj-back-btn" id="proj-back">← Projects</button>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="proj-back-btn" id="proj-back">← Projects</button>
+        ${p.trip_id ? `<button class="proj-back-btn" id="proj-trip-link" style="opacity:0.75">✈ ${escHtml(p.trip_name || 'Trip')}</button>` : ''}
+      </div>
       <div class="proj-detail-title-row">
         <span class="proj-color-dot" style="background:${color}"></span>
         <h2 class="proj-detail-title">${escHtml(p.title)}</h2>
@@ -1337,6 +1615,10 @@ function _projWireDetail(el, p) {
       await _projLoadList(); _projRenderList(el);
     }, sig);
   }
+  el.querySelector('#proj-trip-link')?.addEventListener('click', () => {
+    window._openTripId = p.trip_id;
+    loadPage('trips');
+  }, sig);
   const _closeMenu = () => { const m = el.querySelector('.proj-header-menu'); if (m) m.open = false; };
   el.querySelector('#proj-edit-btn').addEventListener('click', () => { _closeMenu(); _projOpenEditModal(el); }, sig);
   if (!_inTrip) {
@@ -1654,34 +1936,62 @@ async function _projOpenNewModal(el, template = null) {
 
 function _projOpenTemplatePickerModal(el) {
   let selectedId = null;
+  let selectedIsCustom = false;
 
-  const cards = PROJ_TEMPLATES.filter(t => !t.tripVariant).map(t => `
-    <div class="proj-tmpl-card" data-tmpl="${t.id}">
-      <div class="proj-tmpl-top">
-        <span class="proj-tmpl-icon">${t.icon}</span>
-        <div>
-          <div class="proj-tmpl-name">${escHtml(t.name)}</div>
-          <div class="proj-tmpl-desc">${escHtml(t.description)}</div>
-        </div>
-      </div>
-      <div class="proj-tmpl-ms-list">
-        ${t.milestones.map(m => `<span class="proj-tmpl-ms-item">● ${escHtml(m.title)}</span>`).join('')}
-      </div>
-    </div>`).join('');
+  function buildPickerHTML() {
+    const defaultTmpls = PROJ_TEMPLATES.filter(t => !t.tripVariant);
+    const customSection = _projCustomTemplates.length ? `
+      <div class="proj-tmpl-section-hdr">My Templates</div>
+      <div class="proj-tmpl-grid" style="margin-bottom:16px">
+        ${_projCustomTemplates.map(t => `
+          <div class="proj-tmpl-card" data-tmpl="${t.id}" data-custom="1">
+            <div class="proj-tmpl-top">
+              <span class="proj-tmpl-icon">${escHtml(t.icon || '📋')}</span>
+              <div>
+                <div class="proj-tmpl-name">${escHtml(t.name)}</div>
+                <div class="proj-tmpl-desc">${escHtml(t.description || '')}</div>
+              </div>
+            </div>
+            <div class="proj-tmpl-ms-list">
+              ${(t.milestones || []).map(m => `<span class="proj-tmpl-ms-item">● ${escHtml(m.title)}</span>`).join('')}
+            </div>
+            <span class="proj-tmgr-badge proj-tmgr-badge--custom" style="margin-top:6px;display:inline-flex">✎ Custom</span>
+          </div>`).join('')}
+      </div>` : '';
+    const builtinSection = `
+      <div class="proj-tmpl-section-hdr">Built-in Templates</div>
+      <div class="proj-tmpl-grid">
+        ${defaultTmpls.map(t => `
+          <div class="proj-tmpl-card" data-tmpl="${t.id}">
+            <div class="proj-tmpl-top">
+              <span class="proj-tmpl-icon">${t.icon}</span>
+              <div>
+                <div class="proj-tmpl-name">${escHtml(t.name)}</div>
+                <div class="proj-tmpl-desc">${escHtml(t.description)}</div>
+              </div>
+            </div>
+            <div class="proj-tmpl-ms-list">
+              ${t.milestones.map(m => `<span class="proj-tmpl-ms-item">● ${escHtml(m.title)}</span>`).join('')}
+            </div>
+          </div>`).join('')}
+      </div>`;
+    return customSection + builtinSection;
+  }
 
   const overlay = createModal('Start from a Template',
-    `<div class="proj-tmpl-grid">${cards}</div>
+    `<div id="proj-tpick-body">${buildPickerHTML()}</div>
      <p style="text-align:center;margin-top:12px;font-size:12px;color:var(--text-muted)">Relative due dates are resolved from your project's start date and deadline.</p>`,
     ov => {
       if (!selectedId) { alert('Select a template to continue.'); return false; }
-      const tmpl = PROJ_TEMPLATES.find(t => t.id === selectedId);
+      const tmpl = selectedIsCustom
+        ? _projCustomTemplates.find(t => t.id === parseInt(selectedId))
+        : PROJ_TEMPLATES.find(t => t.id === selectedId);
       closeModal(ov);
       ov.remove();
       _projOpenNewModal(el, tmpl);
       return false;
     }, 'Use Template');
 
-  // "Start blank" shortcut in footer
   const footer = overlay.querySelector('.modal-footer');
   const blankBtn = document.createElement('button');
   blankBtn.className = 'btn btn-secondary';
@@ -1690,18 +2000,447 @@ function _projOpenTemplatePickerModal(el) {
   blankBtn.addEventListener('click', () => { closeModal(overlay); overlay.remove(); _projOpenNewModal(el); });
   footer.prepend(blankBtn);
 
-  overlay.querySelectorAll('.proj-tmpl-card').forEach(card => {
-    card.addEventListener('click', () => {
-      overlay.querySelectorAll('.proj-tmpl-card').forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
-      selectedId = card.dataset.tmpl;
-    });
+  overlay.querySelector('#proj-tpick-body').addEventListener('click', e => {
+    const card = e.target.closest('.proj-tmpl-card');
+    if (!card) return;
+    overlay.querySelectorAll('.proj-tmpl-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    selectedId = card.dataset.tmpl;
+    selectedIsCustom = !!card.dataset.custom;
   });
 
   openModal(overlay);
+
+  _projLoadCustomTemplates().then(() => {
+    if (_projCustomTemplates.length) {
+      overlay.querySelector('#proj-tpick-body').innerHTML = buildPickerHTML();
+      // re-select previous selection if still present
+      if (selectedId) {
+        const prev = overlay.querySelector(`.proj-tmpl-card[data-tmpl="${selectedId}"]`);
+        if (prev) prev.classList.add('selected');
+      }
+    }
+  });
 }
 
-async function _projApplyTemplateToProject(proj, template) {
+async function _projOpenManageTemplatesModal(el) {
+  await _projLoadCustomTemplates();
+  const defaultTmpls = PROJ_TEMPLATES.filter(t => !t.tripVariant);
+
+  function renderBody(ov) {
+    const body = ov.querySelector('#tmgr-body');
+    const defaultCards = defaultTmpls.map(t => {
+      const badges = _projFilterBadgesHTML(t.filterTripType, t.filterDestination, t.filterLength);
+      return `
+      <div class="proj-tmgr-card proj-tmgr-card--default">
+        <div class="proj-tmgr-card-top">
+          <span class="proj-tmgr-card-icon">${t.icon}</span>
+          <div>
+            <div class="proj-tmgr-card-name">${escHtml(t.name)}</div>
+            <div class="proj-tmgr-card-desc">${escHtml(t.description || '')}</div>
+            ${badges ? `<div style="margin-top:4px">${badges}</div>` : ''}
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <span class="proj-tmgr-badge proj-tmgr-badge--builtin">🔒 Built-in</span>
+          <button class="btn btn-secondary btn-sm tmgr-copy-btn" data-id="${t.id}">Make a copy</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    const customCards = _projCustomTemplates.length
+      ? _projCustomTemplates.map(t => {
+          const srcName = t.source_id ? (PROJ_TEMPLATES.find(s => s.id === t.source_id)?.name || null) : null;
+          const badges = _projFilterBadgesHTML(t.filter_trip_type, t.filter_destination, t.filter_length);
+          return `
+          <div class="proj-tmgr-card" data-id="${t.id}">
+            <div class="proj-tmgr-card-top">
+              <span class="proj-tmgr-card-icon">${escHtml(t.icon || '📋')}</span>
+              <div>
+                <div class="proj-tmgr-card-name">${escHtml(t.name)}</div>
+                <div class="proj-tmgr-card-desc">${escHtml(t.description || '')}</div>
+                ${srcName ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">Based on: ${escHtml(srcName)}</div>` : ''}
+                ${badges ? `<div style="margin-top:4px">${badges}</div>` : ''}
+              </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+              <span class="proj-tmgr-badge proj-tmgr-badge--custom">✎ Custom</span>
+              <div style="display:flex;gap:4px">
+                <button class="btn btn-secondary btn-sm tmgr-edit-btn" data-id="${t.id}">Edit</button>
+                <button class="btn btn-icon tmgr-del-btn" data-id="${t.id}" title="Delete">✕</button>
+              </div>
+            </div>
+          </div>`;
+        }).join('')
+      : `<p style="color:var(--text-muted);font-size:13px;padding:6px 0">No custom templates yet — make a copy of a built-in template or create one from scratch.</p>`;
+
+    body.innerHTML = `
+      <div class="proj-tmgr-section">
+        <div class="proj-tmgr-section-hdr">
+          <span class="proj-tmgr-section-title">Built-in Templates</span>
+        </div>
+        <div class="proj-tmgr-grid">${defaultCards}</div>
+      </div>
+      <div class="proj-tmgr-section">
+        <div class="proj-tmgr-section-hdr">
+          <span class="proj-tmgr-section-title">My Templates</span>
+          <button class="btn btn-primary btn-sm" id="tmgr-new-btn">+ New Template</button>
+        </div>
+        <div class="proj-tmgr-custom-grid">${customCards}</div>
+      </div>`;
+
+    body.querySelector('#tmgr-new-btn').addEventListener('click', () => {
+      _projOpenTemplateEditorModal({}, async () => {
+        await _projLoadCustomTemplates();
+        renderBody(ov);
+      });
+    });
+
+    body.querySelectorAll('.tmgr-copy-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const src = defaultTmpls.find(t => t.id === btn.dataset.id);
+        if (!src) return;
+        const srcTripType = Array.isArray(src.filterTripType)
+          ? (src.filterTripType[0] || 'any') : (src.filterTripType || 'any');
+        _projOpenTemplateEditorModal({
+          name: `${src.name} (copy)`,
+          icon: src.icon,
+          description: src.description || '',
+          color: src.color || 'cyan',
+          is_ongoing: !!src.is_ongoing,
+          source_id: src.id,
+          filter_trip_type:  srcTripType,
+          filter_destination: src.filterDestination || 'any',
+          filter_length:     src.filterLength || 'any',
+          milestones: JSON.parse(JSON.stringify(src.milestones || [])),
+          tasks: JSON.parse(JSON.stringify(src.tasks || [])),
+          note_title: src.note?.title || '',
+          note_content: src.note?.content || '',
+        }, async () => {
+          await _projLoadCustomTemplates();
+          renderBody(ov);
+        });
+      });
+    });
+
+    body.querySelectorAll('.tmgr-edit-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tmpl = _projCustomTemplates.find(t => t.id === parseInt(btn.dataset.id));
+        if (!tmpl) return;
+        _projOpenTemplateEditorModal({
+          id: tmpl.id,
+          name: tmpl.name,
+          icon: tmpl.icon || '📋',
+          description: tmpl.description || '',
+          color: tmpl.color || 'cyan',
+          is_ongoing: !!tmpl.is_ongoing,
+          source_id: tmpl.source_id || null,
+          filter_trip_type:  tmpl.filter_trip_type  || 'any',
+          filter_destination: tmpl.filter_destination || 'any',
+          filter_length:     tmpl.filter_length     || 'any',
+          milestones: JSON.parse(JSON.stringify(tmpl.milestones || [])),
+          tasks: JSON.parse(JSON.stringify(tmpl.tasks || [])),
+          note_title: tmpl.note?.title || '',
+          note_content: tmpl.note?.content || '',
+        }, async () => {
+          await _projLoadCustomTemplates();
+          renderBody(ov);
+        });
+      });
+    });
+
+    body.querySelectorAll('.tmgr-del-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const tmpl = _projCustomTemplates.find(t => t.id === parseInt(btn.dataset.id));
+        if (!tmpl || !confirm(`Delete template "${tmpl.name}"?`)) return;
+        try {
+          await apiFetch('DELETE', `/projects/templates/${tmpl.id}`);
+          await _projLoadCustomTemplates();
+          renderBody(ov);
+        } catch(e) { alert(e.message); }
+      });
+    });
+  }
+
+  const overlay = createModal('Manage Project Templates',
+    '<div id="tmgr-body" style="min-height:160px"></div>',
+    () => {}, 'Done'
+  );
+  overlay.querySelector('.modal').style.maxWidth = '800px';
+  overlay.querySelector('.modal-cancel-btn').remove();
+  renderBody(overlay);
+  openModal(overlay);
+}
+
+function _projOpenTemplateEditorModal(initData, onSave) {
+  const isEdit = !!initData.id;
+  const state = {
+    name:              initData.name             || '',
+    icon:              initData.icon             || '📋',
+    description:       initData.description      || '',
+    color:             initData.color            || 'cyan',
+    is_ongoing:        !!initData.is_ongoing,
+    source_id:         initData.source_id        || null,
+    filter_trip_type:  initData.filter_trip_type  || 'any',
+    filter_destination:initData.filter_destination|| 'any',
+    filter_length:     initData.filter_length     || 'any',
+    milestones:        (initData.milestones || []).map(m => ({ ...m })),
+    tasks:             (initData.tasks      || []).map(t => ({ ...t })),
+    note_title:        initData.note_title        || '',
+    note_content:      initData.note_content      || '',
+  };
+
+  function syncFromModal(ov) {
+    state.name              = ov.querySelector('#te-name').value.trim();
+    state.icon              = ov.querySelector('#te-icon').value.trim() || '📋';
+    state.description       = ov.querySelector('#te-desc').value.trim();
+    state.color             = ov.querySelector('.proj-color-swatch.active')?.dataset.color || state.color;
+    state.is_ongoing        = ov.querySelector('#te-ongoing').checked;
+    state.filter_trip_type  = ov.querySelector('#te-ftype').value;
+    state.filter_destination= ov.querySelector('#te-fdest').value;
+    state.filter_length     = ov.querySelector('#te-flength').value;
+    state.note_title        = ov.querySelector('#te-note-title').value.trim();
+    state.note_content      = ov.querySelector('#te-note-content').value.trim();
+    state.milestones   = [...ov.querySelectorAll('.tmpl-ms-row')].map(row => ({
+      title:          row.querySelector('.tmpl-ms-title').value,
+      ref:            row.querySelector('.tmpl-ms-ref').value,
+      offset:         parseInt(row.querySelector('.tmpl-ms-offset').value) || 0,
+      is_deliverable: row.querySelector('.tmpl-ms-deliv').checked,
+    }));
+    state.tasks = [...ov.querySelectorAll('.tmpl-task-row')].map(row => {
+      const msVal = row.querySelector('.tmpl-task-ms').value;
+      return {
+        title:     row.querySelector('.tmpl-task-title').value,
+        milestone: msVal !== '' ? parseInt(msVal) : null,
+        priority:  row.querySelector('.tmpl-task-priority').value,
+        task_type: row.querySelector('.tmpl-task-type').value,
+        ref:       row.querySelector('.tmpl-task-ref').value,
+        offset:    parseInt(row.querySelector('.tmpl-task-offset').value) || 0,
+      };
+    });
+  }
+
+  function renderMilestones(ov) {
+    ov.querySelector('#te-ms-tbody').innerHTML = state.milestones.map((m, i) => `
+      <tr class="tmpl-ms-row" data-idx="${i}">
+        <td><input class="tmpl-inp tmpl-ms-title" value="${escHtml(m.title)}" placeholder="Milestone name"></td>
+        <td><select class="tmpl-inp tmpl-inp-sel tmpl-ms-ref">
+          <option value="start"${m.ref==='start'?' selected':''}>Start</option>
+          <option value="deadline"${m.ref==='deadline'?' selected':''}>Deadline</option>
+        </select></td>
+        <td><input class="tmpl-inp tmpl-inp-sm tmpl-ms-offset" type="number" value="${m.offset}"></td>
+        <td style="text-align:center"><input type="checkbox" class="tmpl-ms-deliv"${m.is_deliverable?' checked':''}></td>
+        <td><button type="button" class="tmpl-del-btn tmpl-ms-del">✕</button></td>
+      </tr>`).join('');
+    ov.querySelector('#te-ms-tbody').querySelectorAll('.tmpl-ms-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.closest('.tmpl-ms-row').dataset.idx);
+        syncFromModal(ov);
+        state.milestones.splice(idx, 1);
+        state.tasks.forEach(t => {
+          if (t.milestone === idx) t.milestone = null;
+          else if (t.milestone != null && t.milestone > idx) t.milestone--;
+        });
+        renderMilestones(ov);
+        renderTasks(ov);
+      });
+    });
+  }
+
+  function msOptions() {
+    return state.milestones.map((m, i) =>
+      `<option value="${i}">${escHtml(m.title || `Milestone ${i + 1}`)}</option>`
+    ).join('');
+  }
+
+  function renderTasks(ov) {
+    const opts = msOptions();
+    ov.querySelector('#te-task-tbody').innerHTML = state.tasks.map((t, i) => `
+      <tr class="tmpl-task-row" data-idx="${i}">
+        <td><input class="tmpl-inp tmpl-task-title" value="${escHtml(t.title)}" placeholder="Task name" style="min-width:130px"></td>
+        <td><select class="tmpl-inp tmpl-inp-sel tmpl-task-ms" style="width:100px">
+          <option value="">—</option>
+          ${opts.replace(`value="${t.milestone}"`, `value="${t.milestone}" selected`)}
+        </select></td>
+        <td><select class="tmpl-inp tmpl-inp-sel tmpl-task-priority" style="width:72px">
+          ${['high','medium','low'].map(p => `<option value="${p}"${t.priority===p?' selected':''}>${p}</option>`).join('')}
+        </select></td>
+        <td><select class="tmpl-inp tmpl-inp-sel tmpl-task-type" style="width:86px">
+          ${['todo','research','purchase','event'].map(ty => `<option value="${ty}"${t.task_type===ty?' selected':''}>${ty}</option>`).join('')}
+        </select></td>
+        <td><select class="tmpl-inp tmpl-inp-sel tmpl-task-ref" style="width:76px">
+          <option value="start"${t.ref==='start'?' selected':''}>Start</option>
+          <option value="deadline"${t.ref==='deadline'?' selected':''}>Deadline</option>
+        </select></td>
+        <td><input class="tmpl-inp tmpl-inp-sm tmpl-task-offset" type="number" value="${t.offset}" style="width:58px"></td>
+        <td><button type="button" class="tmpl-del-btn tmpl-task-del">✕</button></td>
+      </tr>`).join('');
+    ov.querySelector('#te-task-tbody').querySelectorAll('.tmpl-task-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.closest('.tmpl-task-row').dataset.idx);
+        syncFromModal(ov);
+        state.tasks.splice(idx, 1);
+        renderTasks(ov);
+      });
+    });
+  }
+
+  const bodyHTML = `
+    <div class="tmpl-ed-section">
+      <div style="display:grid;grid-template-columns:1fr 64px 1fr;gap:12px;align-items:end;margin-bottom:12px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Template name</label>
+          <input class="form-input" id="te-name" value="${escHtml(state.name)}" placeholder="My Template">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Icon</label>
+          <input class="form-input" id="te-icon" value="${escHtml(state.icon)}" style="text-align:center;font-size:17px;padding:5px 4px">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Color</label>
+          <div class="proj-color-picker" id="te-color-picker">
+            ${PROJ_COLORS.map(c => `<button type="button" class="proj-color-swatch${c===state.color?' active':''}" data-color="${c}" style="background:${PROJ_COLOR_HEX[c]}" title="${c}"></button>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input class="form-input" id="te-desc" value="${escHtml(state.description)}" placeholder="What is this template for?">
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:4px">
+        <input type="checkbox" id="te-ongoing"${state.is_ongoing?' checked':''}> Ongoing project (no fixed deadline)
+      </label>
+      ${state.source_id ? `<p class="tmpl-ed-hint" style="margin-top:8px">Based on: <strong>${escHtml(PROJ_TEMPLATES.find(t=>t.id===state.source_id)?.name || state.source_id)}</strong></p>` : ''}
+    </div>
+
+    <div class="tmpl-ed-section">
+      <div class="tmpl-ed-section-hdr"><span>Trip Context <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:.6">(optional filters)</span></span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <div>
+          <label class="form-label" style="font-size:11px">Trip type</label>
+          <select class="form-input" id="te-ftype">
+            ${[['any','Any'],['beach','Beach'],['camping','Camping'],['hiking','Hiking'],['sightseeing','Sightseeing'],
+               ['business','Business'],['general','General'],['roadtrip','Road Trip'],['event','Event'],
+               ['family','Family'],['cruise','Cruise']].map(([v,l])=>`<option value="${v}"${state.filter_trip_type===v?' selected':''}>${l}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" style="font-size:11px">Destination</label>
+          <select class="form-input" id="te-fdest">
+            ${[['any','Any'],['domestic','Domestic'],['international','International']].map(([v,l])=>`<option value="${v}"${state.filter_destination===v?' selected':''}>${l}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" style="font-size:11px">Trip length</label>
+          <select class="form-input" id="te-flength">
+            ${[['any','Any'],['weekend','Weekend'],['short','Short'],['weeklong','1 Week'],['extended','Extended']].map(([v,l])=>`<option value="${v}"${state.filter_length===v?' selected':''}>${l}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="tmpl-ed-section">
+      <div class="tmpl-ed-section-hdr">
+        <span>Milestones</span>
+        <button type="button" class="btn btn-secondary btn-sm" id="te-add-ms">+ Add Milestone</button>
+      </div>
+      <table class="tmpl-ms-table">
+        <thead><tr>
+          <th>Title</th><th>Relative to</th><th>Days offset</th>
+          <th title="Counts as a deliverable milestone">Deliv.</th><th></th>
+        </tr></thead>
+        <tbody id="te-ms-tbody"></tbody>
+      </table>
+      <p class="tmpl-ed-hint">Positive offset = after the reference date; negative = before.</p>
+    </div>
+
+    <div class="tmpl-ed-section">
+      <div class="tmpl-ed-section-hdr">
+        <span>Tasks</span>
+        <button type="button" class="btn btn-secondary btn-sm" id="te-add-task">+ Add Task</button>
+      </div>
+      <table class="tmpl-task-table">
+        <thead><tr>
+          <th>Title</th><th>Milestone</th><th>Priority</th>
+          <th>Type</th><th>Relative to</th><th>Offset</th><th></th>
+        </tr></thead>
+        <tbody id="te-task-tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="tmpl-ed-section">
+      <div class="tmpl-ed-section-hdr"><span>Starter Note (optional)</span></div>
+      <div class="form-group">
+        <label class="form-label">Note title</label>
+        <input class="form-input" id="te-note-title" value="${escHtml(state.note_title)}" placeholder="Project Log">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Note content (plain text)</label>
+        <textarea class="form-input" id="te-note-content" rows="3" placeholder="Initial note content…">${escHtml(state.note_content)}</textarea>
+      </div>
+    </div>`;
+
+  const overlay = createModal(
+    isEdit ? 'Edit Template' : 'New Template',
+    bodyHTML,
+    async ov => {
+      syncFromModal(ov);
+      if (!state.name) { alert('Template name is required.'); return false; }
+      const payload = {
+        name:               state.name,
+        icon:               state.icon,
+        description:        state.description || null,
+        color:              state.color,
+        is_ongoing:         state.is_ongoing,
+        source_id:          state.source_id   || null,
+        filter_trip_type:   state.filter_trip_type,
+        filter_destination: state.filter_destination,
+        filter_length:      state.filter_length,
+        milestones:         JSON.stringify(state.milestones),
+        tasks:              JSON.stringify(state.tasks),
+        note_title:         state.note_title   || null,
+        note_content:       state.note_content || null,
+      };
+      try {
+        if (isEdit) {
+          await apiFetch('PATCH', `/projects/templates/${initData.id}`, payload);
+        } else {
+          await apiFetch('POST', '/projects/templates', payload);
+        }
+        if (onSave) onSave();
+      } catch(e) { alert(e.message); return false; }
+    },
+    isEdit ? 'Save Changes' : 'Create Template'
+  );
+
+  overlay.querySelector('.modal').style.maxWidth = '740px';
+
+  overlay.querySelectorAll('.proj-color-swatch').forEach(sw => {
+    sw.addEventListener('click', () => {
+      overlay.querySelectorAll('.proj-color-swatch').forEach(s => s.classList.remove('active'));
+      sw.classList.add('active');
+    });
+  });
+
+  overlay.querySelector('#te-add-ms').addEventListener('click', () => {
+    syncFromModal(overlay);
+    state.milestones.push({ title: '', ref: 'start', offset: 0, is_deliverable: false });
+    renderMilestones(overlay);
+    renderTasks(overlay);
+  });
+
+  overlay.querySelector('#te-add-task').addEventListener('click', () => {
+    syncFromModal(overlay);
+    state.tasks.push({ title: '', milestone: null, priority: 'medium', task_type: 'todo', ref: 'start', offset: 0 });
+    renderTasks(overlay);
+  });
+
+  renderMilestones(overlay);
+  renderTasks(overlay);
+  openModal(overlay);
+}
+
+async function _projApplyTemplateToProject(proj, template, destFilter = 'any') {
   const pid = proj.id;
   const start = proj.start_date;
   const deadline = proj.deadline;
@@ -1726,6 +2465,7 @@ async function _projApplyTemplateToProject(proj, template) {
   // Create tasks
   for (let i = 0; i < template.tasks.length; i++) {
     const t = template.tasks[i];
+    if (t.dest === 'international' && destFilter === 'domestic') continue;
     const msTitle = t.milestone != null ? template.milestones[t.milestone].title : null;
     await apiFetch('POST', `/projects/${pid}/tasks`, {
       title: t.title,

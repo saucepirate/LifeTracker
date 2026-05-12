@@ -222,9 +222,9 @@ def create_task(body: TaskCreate):
     initial_due = body.due_date or (date.today().isoformat() if recurrence_id else None)
 
     result = conn.execute(
-        """INSERT INTO tasks (title, notes, priority, goal_id, note_id, due_date, is_recurring, recurrence_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
-        (body.title, body.notes, body.priority, body.goal_id, body.note_id, initial_due,
+        """INSERT INTO tasks (title, notes, priority, goal_id, trip_id, note_id, due_date, is_recurring, recurrence_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+        (body.title, body.notes, body.priority, body.goal_id, body.trip_id, body.note_id, initial_due,
          1 if recurrence_id else 0, recurrence_id)
     ).fetchone()
     task_id = result[0]

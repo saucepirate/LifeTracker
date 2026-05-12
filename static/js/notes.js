@@ -247,6 +247,12 @@ async function openNote(noteId) {
     note = _notes.find(n => n.id === noteId);
     if (!note) return;
   }
+  if (window.setFabContext) window.setFabContext({
+    noteId:    note.id,
+    noteTitle: note.title,
+    tagIds:    (note.tags || []).map(t => t.id),
+    goalId:    note.goal_id || null,
+  });
   await _renderEditorView(note);
 }
 

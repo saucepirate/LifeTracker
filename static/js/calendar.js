@@ -19,7 +19,7 @@ let _calProjectId = null;
 let _calDayDate = null;
 
 const CAL_HOUR_START = 7;
-const CAL_HOUR_END = 21;
+const CAL_HOUR_END = 24;
 const CAL_HOUR_HEIGHT = 60;
 
 // ── Entry ────────────────────────────────────────────────────────────────────
@@ -920,7 +920,7 @@ function renderWeekGrid(weekStart, weekEnd) {
   if (hasTimedEvents) {
     let hoursHtml = '';
     for (let h = CAL_HOUR_START; h < CAL_HOUR_END; h++) {
-      const label = h === 12 ? '12 PM' : h < 12 ? `${h} AM` : `${h - 12} PM`;
+      const label = h === 12 ? '12 PM' : h === 0 ? '12 AM' : h < 12 ? `${h} AM` : `${h - 12} PM`;
       hoursHtml += `<div class="cal-week-time-label">${label}</div>`;
       days.forEach(iso => {
         const timeStr = `${String(h).padStart(2,'0')}:00`;
@@ -1457,7 +1457,7 @@ async function _calDeleteEvent(ev, afterFn) {
   const dismiss = () => { overlay.classList.remove('open'); overlay.remove(); };
   overlay.querySelector('.modal-close').addEventListener('click', dismiss);
   overlay.querySelector('.modal-cancel-btn').addEventListener('click', dismiss);
-  overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+  addOverlayDismiss(overlay, dismiss);
   overlay.querySelector('#rcl-this').addEventListener('click', async () => {
     dismiss();
     await apiFetch('DELETE', `/calendar/events/${ev.id}?scope=this&occurrence_date=${ev.date}`);

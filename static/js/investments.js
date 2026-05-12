@@ -1689,7 +1689,7 @@ function _openInvActionModal(action, listEl) {
   const dismiss = () => { overlay.classList.remove('open'); setTimeout(() => overlay.remove(), 150); };
   overlay.querySelector('.modal-close').addEventListener('click', dismiss);
   overlay.querySelector('.modal-cancel-btn').addEventListener('click', dismiss);
-  overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+  addOverlayDismiss(overlay, dismiss);
 
   overlay.querySelector('#ia-save').addEventListener('click', async () => {
     const sym   = overlay.querySelector('#ia-sym').value.trim().toUpperCase() || null;
@@ -1873,7 +1873,7 @@ function _openInvImportModal() {
   const dismiss = () => { overlay.classList.remove('open'); setTimeout(() => overlay.remove(), 150); };
   overlay.querySelector('.modal-close').addEventListener('click', dismiss);
   overlay.querySelector('.modal-cancel-btn').addEventListener('click', dismiss);
-  overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+  addOverlayDismiss(overlay, dismiss);
 
   overlay.querySelectorAll('input[name="inv-itype"]').forEach(r => {
     r.addEventListener('change', () => {

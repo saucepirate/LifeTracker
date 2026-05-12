@@ -7,6 +7,7 @@ from models.projects import (
     ProjectCreate, ProjectUpdate,
     MilestoneCreate, MilestoneUpdate,
     TaskCreate, TaskUpdate,
+    ProjectTemplateCreate, ProjectTemplateUpdate,
 )
 
 router = APIRouter()
@@ -35,12 +36,13 @@ def _project_full(conn, project_id: int):
     p = dict(row)
     p['is_ongoing'] = bool(p['is_ongoing'])
 
-    # Attach lightweight trip budget summary when linked
+    # Attach lightweight trip summary when linked
     if p.get('trip_id'):
         trip_row = conn.execute(
-            "SELECT budget_total, budget_currency FROM trips WHERE id = ?", (p['trip_id'],)
+            "SELECT name, budget_total, budget_currency FROM trips WHERE id = ?", (p['trip_id'],)
         ).fetchone()
         if trip_row:
+            p['trip_name'] = trip_row['name']
             total_out = conn.execute(
                 "SELECT COALESCE(SUM(amount), 0) FROM budget_expenses WHERE trip_id = ?", (p['trip_id'],)
             ).fetchone()[0]
@@ -217,6 +219,97 @@ def create_project(body: ProjectCreate):
     finally:
         conn.close()
 
+
+# ── Custom project templates ──────────────────────────────────────────────────
+
+@router.get("/templates")
+def list_project_templates():
+    conn = database.get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM project_templates ORDER BY created_at ASC"
+        ).fetchall()
+        return {"items": [dict(r) for r in rows], "total": len(rows)}
+    finally:
+        conn.close()
+
+
+@router.post("/templates", status_code=201)
+def create_project_template(body: ProjectTemplateCreate):
+    conn = database.get_connection()
+    try:
+        now = _date.today().isoformat()
+        cur = conn.execute(
+            """INSERT INTO project_templates
+               (name, icon, description, color, is_ongoing, milestones, tasks, note_title, note_content,
+                source_id, filter_trip_type, filter_destination, filter_length, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (body.name, body.icon, body.description, body.color,
+             1 if body.is_ongoing else 0, body.milestones, body.tasks,
+             body.note_title, body.note_content,
+             body.source_id, body.filter_trip_type, body.filter_destination, body.filter_length, now)
+        )
+        tid = cur.lastrowid
+        conn.commit()
+        return dict(conn.execute("SELECT * FROM project_templates WHERE id=?", (tid,)).fetchone())
+    finally:
+        conn.close()
+
+
+@router.get("/templates/{template_id}")
+def get_project_template(template_id: int):
+    conn = database.get_connection()
+    try:
+        row = conn.execute("SELECT * FROM project_templates WHERE id=?", (template_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Template not found")
+        return dict(row)
+    finally:
+        conn.close()
+
+
+@router.patch("/templates/{template_id}")
+def update_project_template(template_id: int, body: ProjectTemplateUpdate):
+    conn = database.get_connection()
+    try:
+        if not conn.execute("SELECT id FROM project_templates WHERE id=?", (template_id,)).fetchone():
+            raise HTTPException(404, "Template not found")
+        sets, vals = [], []
+        if body.name is not None:              sets.append("name=?");              vals.append(body.name)
+        if body.icon is not None:              sets.append("icon=?");              vals.append(body.icon)
+        if body.description is not None:       sets.append("description=?");       vals.append(body.description)
+        if body.color is not None:             sets.append("color=?");             vals.append(body.color)
+        if body.is_ongoing is not None:        sets.append("is_ongoing=?");        vals.append(1 if body.is_ongoing else 0)
+        if body.milestones is not None:        sets.append("milestones=?");        vals.append(body.milestones)
+        if body.tasks is not None:             sets.append("tasks=?");             vals.append(body.tasks)
+        if body.note_title is not None:        sets.append("note_title=?");        vals.append(body.note_title)
+        if body.note_content is not None:      sets.append("note_content=?");      vals.append(body.note_content)
+        if body.source_id is not None:         sets.append("source_id=?");         vals.append(body.source_id)
+        if body.filter_trip_type is not None:  sets.append("filter_trip_type=?");  vals.append(body.filter_trip_type)
+        if body.filter_destination is not None:sets.append("filter_destination=?");vals.append(body.filter_destination)
+        if body.filter_length is not None:     sets.append("filter_length=?");     vals.append(body.filter_length)
+        if sets:
+            sets.append("updated_at=?")
+            vals.append(_date.today().isoformat())
+            vals.append(template_id)
+            conn.execute(f"UPDATE project_templates SET {','.join(sets)} WHERE id=?", vals)
+            conn.commit()
+        return dict(conn.execute("SELECT * FROM project_templates WHERE id=?", (template_id,)).fetchone())
+    finally:
+        conn.close()
+
+
+@router.delete("/templates/{template_id}", status_code=204)
+def delete_project_template(template_id: int):
+    conn = database.get_connection()
+    try:
+        conn.execute("DELETE FROM project_templates WHERE id=?", (template_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Project CRUD ──────────────────────────────────────────────────────────────
 
 @router.get("/{project_id}")
 def get_project(project_id: int):
@@ -438,3 +531,4 @@ def delete_task(project_id: int, task_id: int):
         conn.commit()
     finally:
         conn.close()
+

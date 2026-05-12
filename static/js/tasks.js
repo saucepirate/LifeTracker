@@ -69,6 +69,16 @@ registerPage('tasks', async function(content) {
 
   await loadAll();
   renderAll();
+
+  if (window.setFabContext) window.setFabContext({
+    _onAdded: async (type) => { if (type === 'task') { await loadAll(); renderAll(); } },
+  });
+
+  if (window._fabQuickAdd?.type === 'task') {
+    const goalId = window._fabQuickAdd.goalId;
+    window._fabQuickAdd = null;
+    setTimeout(() => openNewTaskModal(goalId || null), 150);
+  }
 });
 
 // ── LocalStorage helpers ──────────────────────────────────────
@@ -1612,4 +1622,178 @@ function sortedTasks(arr) {
     }
   });
 }
+
+// ── Standalone task editor modal (callable from any page) ─────
+window.openTaskEditorModal = async function(taskId, onDone) {
+  let task, goals, tags;
+  try {
+    [task, goals, tags] = await Promise.all([
+      apiFetch('GET', `/tasks/${taskId}`),
+      apiFetch('GET', '/goals?status=active'),
+      apiFetch('GET', '/tags'),
+    ]);
+    goals = goals.items || [];
+    tags  = tags.items  || [];
+  } catch(e) { alert('Could not load task.'); return; }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+
+  const goalOpts = goals.map(g =>
+    `<option value="${g.id}"${task.goal_id === g.id ? ' selected' : ''}>${escHtml(g.title)}</option>`
+  ).join('');
+  const tagChecks = tags.map(tg => {
+    const checked = task.tags.some(t => t.id === tg.id);
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+      <input type="checkbox" data-tag-id="${tg.id}"${checked ? ' checked' : ''}> ${escHtml(tg.name)}
+    </label>`;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:520px;width:100%">
+      <div class="modal-header">
+        <span class="modal-title">Edit Task</span>
+        <button class="modal-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body" style="padding:16px 20px">
+        ${task.status === 'completed' ? `<div class="detail-completed-banner" style="margin-bottom:12px">&#10003; Completed${task.completed_at ? ' &middot; ' + formatDateShort(task.completed_at.slice(0,10)) : ''}</div>` : ''}
+        <div class="form-group">
+          <label class="form-label">Title</label>
+          <textarea class="form-input" id="tem-title" rows="2" style="resize:vertical">${escHtml(task.title)}</textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label class="form-label">Priority</label>
+            <select class="form-input" id="tem-priority">
+              <option value="high"${task.priority==='high'?' selected':''}>High</option>
+              <option value="medium"${task.priority==='medium'?' selected':''}>Medium</option>
+              <option value="low"${task.priority==='low'?' selected':''}>Low</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Due date</label>
+            <input type="date" class="form-input" id="tem-due" value="${task.due_date || ''}">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Linked goal</label>
+          <select class="form-input" id="tem-goal">
+            <option value="">None</option>
+            ${goalOpts}
+          </select>
+        </div>
+        ${tags.length ? `<div class="form-group">
+          <label class="form-label">Tags</label>
+          <div id="tem-tags" style="display:flex;flex-wrap:wrap;gap:8px">${tagChecks}</div>
+        </div>` : ''}
+        <div class="form-group">
+          <label class="form-label">Subtasks</label>
+          <div id="tem-subtasks"></div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input class="form-input" id="tem-sub-input" placeholder="Add subtask…" style="flex:1">
+            <button class="btn btn-secondary btn-sm" id="tem-sub-add">Add</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes</label>
+          <textarea class="form-input" id="tem-notes" rows="3" placeholder="Add notes…">${escHtml(task.notes || '')}</textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex;justify-content:space-between;padding:12px 20px;border-top:var(--border-subtle)">
+        <button class="btn btn-danger btn-sm" id="tem-delete">Delete</button>
+        <div style="display:flex;gap:8px">
+          ${task.status === 'completed' ? '<button class="btn btn-secondary btn-sm" id="tem-reopen">&#8629; Reopen</button>' : ''}
+          <button class="btn btn-secondary btn-sm" id="tem-cancel">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="tem-save">Save</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  function renderSubtaskList(subtasks) {
+    const c = overlay.querySelector('#tem-subtasks');
+    c.innerHTML = (subtasks || []).map(s => `
+      <div class="subtask-row" data-sub-id="${s.id}">
+        <div class="checkbox-square${s.completed ? ' checked' : ''}" data-sub-id="${s.id}" style="cursor:pointer"></div>
+        <span class="subtask-title${s.completed ? ' done' : ''}">${escHtml(s.title)}</span>
+        <button class="subtask-delete-btn" data-sub-id="${s.id}" title="Delete">×</button>
+      </div>`).join('');
+    c.querySelectorAll('.checkbox-square').forEach(cb => {
+      cb.addEventListener('click', async () => {
+        const sub = task.subtasks.find(s => s.id === parseInt(cb.dataset.subId));
+        if (!sub) return;
+        await apiFetch('PUT', `/tasks/${task.id}/subtasks/${sub.id}`, { completed: sub.completed ? 0 : 1 });
+        task = await apiFetch('GET', `/tasks/${task.id}`);
+        renderSubtaskList(task.subtasks);
+      });
+    });
+    c.querySelectorAll('.subtask-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await apiFetch('DELETE', `/tasks/${task.id}/subtasks/${parseInt(btn.dataset.subId)}`);
+        task = await apiFetch('GET', `/tasks/${task.id}`);
+        renderSubtaskList(task.subtasks);
+      });
+    });
+  }
+  renderSubtaskList(task.subtasks);
+
+  function close() {
+    overlay.classList.remove('open');
+    setTimeout(() => overlay.remove(), 150);
+    if (onDone) onDone();
+  }
+
+  async function save() {
+    const title    = overlay.querySelector('#tem-title').value.trim();
+    const priority = overlay.querySelector('#tem-priority').value;
+    const due_date = getDateVal(overlay.querySelector('#tem-due'));
+    const goal_id  = parseInt(overlay.querySelector('#tem-goal').value) || null;
+    const notes    = overlay.querySelector('#tem-notes').value ?? null;
+    const tag_ids  = Array.from(overlay.querySelectorAll('#tem-tags input[type=checkbox]'))
+      .filter(c => c.checked).map(c => parseInt(c.dataset.tagId));
+    const body = { tag_ids, notes };
+    if (title)    body.title    = title;
+    if (priority) body.priority = priority;
+    if (due_date) body.due_date = due_date; else body.clear_due_date = true;
+    if (goal_id)  body.goal_id  = goal_id; else body.clear_goal_id  = true;
+    try {
+      await apiFetch('PUT', `/tasks/${task.id}`, body);
+      close();
+    } catch(e) { alert('Save failed: ' + e.message); }
+  }
+
+  overlay.querySelector('.modal-close').addEventListener('click', close);
+  overlay.querySelector('#tem-cancel').addEventListener('click', close);
+  overlay.querySelector('#tem-save').addEventListener('click', save);
+  addOverlayDismiss(overlay, close);
+
+  overlay.querySelector('#tem-delete').addEventListener('click', async () => {
+    if (!confirm(`Delete "${task.title}"?`)) return;
+    try {
+      await apiFetch('DELETE', `/tasks/${task.id}`);
+      close();
+    } catch(e) { alert('Error: ' + e.message); }
+  });
+
+  overlay.querySelector('#tem-reopen')?.addEventListener('click', async () => {
+    try {
+      await apiFetch('PUT', `/tasks/${task.id}`, { status: 'pending' });
+      close();
+    } catch(e) { alert('Error: ' + e.message); }
+  });
+
+  const subInput = overlay.querySelector('#tem-sub-input');
+  overlay.querySelector('#tem-sub-add').addEventListener('click', async () => {
+    const title = subInput.value.trim();
+    if (!title) return;
+    subInput.value = '';
+    await apiFetch('POST', `/tasks/${task.id}/subtasks`, { title, sort_order: (task.subtasks || []).length });
+    task = await apiFetch('GET', `/tasks/${task.id}`);
+    renderSubtaskList(task.subtasks);
+  });
+  subInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); overlay.querySelector('#tem-sub-add').click(); }
+  });
+};
 

@@ -271,7 +271,7 @@ def get_dashboard():
     # Active projects widget (INT-011–016)
     try:
         proj_rows = conn.execute(
-            """SELECT p.id, p.title, p.color, p.status, p.deadline, p.goal_id
+            """SELECT p.id, p.title, p.color, p.status, p.deadline, p.goal_id, p.trip_id
                FROM projects p WHERE p.status = 'active'
                ORDER BY p.deadline IS NULL, p.deadline ASC""",
         ).fetchall()
@@ -301,10 +301,51 @@ def get_dashboard():
             ).fetchone()
             proj['next_action'] = next_task['title'] if next_task else None
             upcoming_ms = conn.execute(
-                "SELECT title, due_date FROM project_milestones WHERE project_id=? AND status!='completed' AND due_date>=? AND due_date<=? ORDER BY due_date ASC LIMIT 3",
-                (r['id'], today, in30)
+                """SELECT id, title, due_date FROM project_milestones
+                   WHERE project_id=? AND status!='completed'
+                   ORDER BY CASE WHEN due_date IS NOT NULL THEN 0 ELSE 1 END,
+                            due_date ASC
+                   LIMIT 3""",
+                (r['id'],)
             ).fetchall()
             proj['upcoming_milestones'] = [dict(m) for m in upcoming_ms]
+            try:
+                upcoming_pt = conn.execute(
+                    """SELECT id, title, status, due_date, priority
+                       FROM project_tasks
+                       WHERE project_id=? AND status NOT IN ('done','cancelled','skipped')
+                       ORDER BY CASE WHEN due_date IS NOT NULL THEN 0 ELSE 1 END,
+                                due_date ASC,
+                                CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                                sort_order ASC
+                       LIMIT 3""",
+                    (r['id'],)
+                ).fetchall()
+                proj['project_upcoming_tasks'] = [dict(t) for t in upcoming_pt]
+            except Exception:
+                proj['project_upcoming_tasks'] = []
+            try:
+                linked_tasks = []
+                trip_id = proj.get('trip_id')
+                if trip_id:
+                    tag_row = conn.execute(
+                        "SELECT tag_id FROM trips WHERE id=?", (trip_id,)
+                    ).fetchone()
+                    if tag_row and tag_row['tag_id']:
+                        tag_tasks = conn.execute(
+                            """SELECT t.id, t.title, t.due_date, t.priority
+                               FROM tasks t JOIN task_tags tt ON tt.task_id = t.id
+                               WHERE tt.tag_id=? AND t.status='pending'
+                               ORDER BY CASE WHEN t.due_date IS NOT NULL THEN 0 ELSE 1 END,
+                                        t.due_date ASC,
+                                        CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END
+                               LIMIT 3""",
+                            (tag_row['tag_id'],)
+                        ).fetchall()
+                        linked_tasks = [dict(t) for t in tag_tasks]
+                proj['linked_tasks'] = linked_tasks
+            except Exception:
+                proj['linked_tasks'] = []
             active_projects.append(proj)
     except Exception:
         active_projects = []

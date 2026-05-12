@@ -99,6 +99,10 @@ function _dayToMins(hhmm) {
 // ── Data loading ──────────────────────────────────────────────────────────────
 
 async function _dayLoad() {
+  if (window.setFabContext) window.setFabContext({
+    dayDate: _dayDate,
+    _onAdded: () => _dayLoad(),
+  });
   _dayContainer.innerHTML = '<div class="loading-state">Loading…</div>';
   try {
     _dayData = await apiFetch('GET', `/day?date=${_dayDate}`);

@@ -67,6 +67,7 @@ registerPage('dashboard', async function(content) {
       <div class="dash-grid-4">
         <div class="dash-qp" id="dash-qp-tasks">
           <div class="dash-qp-header">
+            <button class="dash-mode-toggle" id="dash-mode-toggle" title="Toggle Today / Activity">⇄</button>
             <span class="dash-section-title" id="dash-tl-title">Today</span>
             <span class="dash-section-link" id="dash-tasks-nav">View all →</span>
           </div>
@@ -75,10 +76,10 @@ registerPage('dashboard', async function(content) {
           </div>
           <div class="dash-qp-body" id="dash-task-list"></div>
           <div class="dash-qp-body dash-qp-body--activity" id="dash-activity-chart" style="display:none"></div>
-          <button class="dash-mode-toggle" id="dash-mode-toggle" title="Toggle Today / Activity">⇄</button>
         </div>
         <div class="dash-qp" id="dash-qp-habits">
           <div class="dash-qp-header">
+            <span class="dash-hdr-spacer"></span>
             <span class="dash-section-title">Habits</span>
             <span class="dash-section-link" id="dash-habits-nav">Goals →</span>
           </div>
@@ -86,6 +87,7 @@ registerPage('dashboard', async function(content) {
         </div>
         <div class="dash-qp" id="dash-qp-cal">
           <div class="dash-qp-header">
+            <span class="dash-hdr-spacer"></span>
             <span class="dash-section-title">Next 7 Days</span>
             <span class="dash-section-link" id="dash-cal-nav">Calendar →</span>
           </div>
@@ -93,28 +95,25 @@ registerPage('dashboard', async function(content) {
         </div>
         <div class="dash-qp" id="dash-qp-goalms">
           <div class="dash-qp-header">
-            <span class="dash-section-title">Goals & Milestones</span>
+            <button class="dash-mode-toggle" id="dash-gm-mode-toggle" title="Toggle Goals / Projects">⇄</button>
+            <span class="dash-section-title" id="dash-gm-title">Goals & Milestones</span>
             <span class="dash-section-link" id="dash-goals-nav">View all →</span>
           </div>
           <div class="dash-qp-body" id="dash-goalms-list"></div>
+          <div class="dash-qp-body" id="dash-goalms-proj-list" style="display:none"></div>
         </div>
-      </div>
-      <div class="dash-qp" id="dash-qp-projects" style="margin-top:12px">
-        <div class="dash-qp-header">
-          <span class="dash-section-title">Active Projects</span>
-          <span class="dash-section-link" id="dash-projects-nav">View all →</span>
-        </div>
-        <div class="dash-qp-body" id="dash-projects-list"></div>
       </div>
     </div>`;
 
-  document.getElementById('dash-tasks-nav')?.addEventListener('click',    () => loadPage('tasks'));
-  document.getElementById('dash-habits-nav')?.addEventListener('click',   () => loadPage('goals'));
-  document.getElementById('dash-goals-nav')?.addEventListener('click',    () => loadPage('goals'));
-  document.getElementById('dash-cal-nav')?.addEventListener('click',      () => loadPage('calendar'));
-  document.getElementById('dash-projects-nav')?.addEventListener('click', () => loadPage('projects'));
+  document.getElementById('dash-tasks-nav')?.addEventListener('click',  () => loadPage('tasks'));
+  document.getElementById('dash-habits-nav')?.addEventListener('click', () => loadPage('goals'));
+  document.getElementById('dash-goals-nav')?.addEventListener('click',  () => loadPage('goals'));
+  document.getElementById('dash-cal-nav')?.addEventListener('click',    () => loadPage('calendar'));
   document.getElementById('dash-mode-toggle')?.addEventListener('click', () => {
     _setTLMode(_tlMode === 'tasks' ? 'activity' : 'tasks');
+  });
+  document.getElementById('dash-gm-mode-toggle')?.addEventListener('click', () => {
+    _setGMMode(_gmMode === 'goals' ? 'projects' : 'goals');
   });
 
   try {
@@ -132,13 +131,14 @@ registerPage('dashboard', async function(content) {
   _renderHabits(_dashData.habits);
   _renderGoalsAndMilestones(_dashData.goals);
   _renderMiniCalendar(_dashData);
-  _renderProjects(_dashData.active_projects);
   _wireQuickAdd();
   _renderTripSelector();
   _setTLMode(_tlMode);
+  _setGMMode(_gmMode);
 });
 
 let _tlMode = localStorage.getItem('dash_tl_mode') || 'tasks';
+let _gmMode = localStorage.getItem('dash_gm_mode') || 'goals';
 
 function _setTLMode(mode) {
   _tlMode = mode;
@@ -152,16 +152,44 @@ function _setTLMode(mode) {
   if (mode === 'activity') {
     taskList.style.display = 'none';
     chart.style.display    = '';
-    if (qa) qa.style.display = 'none';
-    if (title) title.textContent = 'Activity';
-    if (nav) nav.style.display = 'none';
+    if (qa)    qa.style.display    = 'none';
+    if (title) title.textContent   = 'Activity';
+    if (nav)   nav.style.display   = 'none';
     if (_dashData) _renderActivityChart(_dashData);
   } else {
     taskList.style.display = '';
     chart.style.display    = 'none';
-    if (qa) qa.style.display = '';
-    if (title) title.textContent = 'Today';
-    if (nav) nav.style.display = '';
+    if (qa)    qa.style.display    = '';
+    if (title) title.textContent   = 'Today';
+    if (nav)   nav.style.display   = '';
+  }
+}
+
+function _setGMMode(mode) {
+  _gmMode = mode;
+  localStorage.setItem('dash_gm_mode', mode);
+  const goalsList = document.getElementById('dash-goalms-list');
+  const projList  = document.getElementById('dash-goalms-proj-list');
+  const title     = document.getElementById('dash-gm-title');
+  const nav       = document.getElementById('dash-goals-nav');
+  if (!goalsList || !projList) return;
+  if (mode === 'projects') {
+    goalsList.style.display = 'none';
+    projList.style.display  = '';
+    if (title) title.textContent = 'Projects';
+    if (nav)   nav.textContent   = 'View all →';
+    nav?.removeEventListener('click', nav._goalsHandler);
+    nav._projHandler = () => loadPage('projects');
+    nav?.addEventListener('click', nav._projHandler);
+    if (_dashData) _renderDashProjects(_dashData.active_projects);
+  } else {
+    goalsList.style.display = '';
+    projList.style.display  = 'none';
+    if (title) title.textContent = 'Goals & Milestones';
+    if (nav)   nav.textContent   = 'View all →';
+    nav?.removeEventListener('click', nav._projHandler);
+    nav._goalsHandler = () => loadPage('goals');
+    nav?.addEventListener('click', nav._goalsHandler);
   }
 }
 
@@ -173,8 +201,8 @@ async function _dashReload() {
     _renderHabits(_dashData.habits);
     _renderGoalsAndMilestones(_dashData.goals);
     _renderMiniCalendar(_dashData);
-    _renderProjects(_dashData.active_projects);
     if (_tlMode === 'activity') _renderActivityChart(_dashData);
+    if (_gmMode === 'projects') _renderDashProjects(_dashData.active_projects);
   } catch(e) {}
 }
 
@@ -564,7 +592,7 @@ async function _openPinPicker() {
 
   const dismiss = () => { overlay.classList.remove('open'); setTimeout(() => overlay.remove(), 150); };
   overlay.querySelector('.modal-close').addEventListener('click', dismiss);
-  overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+  addOverlayDismiss(overlay, dismiss);
   overlay.querySelector('#pin-pick-go-goals')?.addEventListener('click', () => { dismiss(); loadPage('goals'); });
 
   overlay.querySelectorAll('.pin-pick-item').forEach(item => {
@@ -776,7 +804,7 @@ function _renderTasks(tasks) {
   list.querySelectorAll('.dash-task-row').forEach(row => {
     row.addEventListener('click', e => {
       if (e.target.closest('.dash-task-check')) return;
-      loadPage('tasks');
+      window.openTaskEditorModal(parseInt(row.dataset.id), () => loadPage('dashboard'));
     });
   });
 }
@@ -951,65 +979,112 @@ function _renderGoalsAndMilestones(goals) {
   });
 }
 
-// ── Active Projects panel (INT-011–016) ──────────────────────
-function _projDashHealth(p, today) {
-  if (p.progress === 100) return `<span class="proj-health-badge proj-health-complete">Complete</span>`;
-  if (p.deadline && p.deadline < today) return `<span class="proj-health-badge proj-health-overdue">Overdue</span>`;
-  if (p.overdue_tasks >= 2) return `<span class="proj-health-badge proj-health-atrisk">At risk</span>`;
-  const nm = p.next_milestone;
-  if (nm && nm.due_date && nm.due_date < today) return `<span class="proj-health-badge proj-health-atrisk">At risk</span>`;
-  return `<span class="proj-health-badge proj-health-ontrack">On track</span>`;
-}
+// ── Projects view (inside Goals & Milestones panel toggle) ────
+function _renderDashProjects(projects) {
+  const list = document.getElementById('dash-goalms-proj-list');
+  if (!list) return;
 
-function _renderProjects(projects) {
-  const el = document.getElementById('dash-projects-list');
-  if (!el) return;
-
-  const panel = document.getElementById('dash-qp-projects');
   if (!projects || !projects.length) {
-    if (panel) panel.style.display = 'none';
-    el.innerHTML = `<div class="di-empty">No active projects</div>`;
+    list.innerHTML = `<div class="di-empty">No active projects</div>`;
     return;
   }
-  if (panel) panel.style.display = '';
 
-  const today = todayISO();
   const COLOR_HEX = (typeof PROJ_COLOR_HEX !== 'undefined') ? PROJ_COLOR_HEX : {};
 
-  el.innerHTML = projects.slice(0, 10).map(p => {
+  list.innerHTML = projects.map(p => {
     const color = COLOR_HEX[p.color] || 'var(--neon-cyan)';
-    const healthBadge = _projDashHealth(p, today);
-    const sub = p.next_action
-      ? escHtml(p.next_action.slice(0, 48) + (p.next_action.length > 48 ? '…' : ''))
-      : p.next_milestone
-        ? '↗ ' + escHtml(p.next_milestone.title.slice(0, 44) + (p.next_milestone.title.length > 44 ? '…' : ''))
-        : '';
-    const overdueWarn = p.overdue_tasks > 0
-      ? `<span class="dash-proj-overdue-badge">${p.overdue_tasks} overdue</span>` : '';
-    return `
-      <div class="dash-proj-row" data-id="${p.id}">
-        <div class="dash-proj-row-left">
-          <div class="dash-proj-color-bar" style="background:${color}"></div>
-          <div class="dash-proj-info">
-            <div class="dash-proj-name">${escHtml(p.title)}</div>
-            ${sub ? `<div class="dash-proj-sub">${sub}</div>` : ''}
-          </div>
+
+    // Combine milestones + project_tasks + trip-linked tasks
+    const milestones = (p.upcoming_milestones || []).map(m => ({
+      id: m.id, title: m.title, due_date: m.due_date, _type: 'milestone'
+    }));
+    const ptasks = (p.project_upcoming_tasks || []).map(t => ({
+      id: t.id, title: t.title, due_date: t.due_date, _type: 'task'
+    }));
+    const ltasks = (p.linked_tasks || []).map(t => ({
+      id: t.id, title: t.title, due_date: t.due_date, _type: 'regular_task'
+    }));
+
+    // Merge: milestones first, then project_tasks, then trip-linked regular tasks
+    let items = [...milestones];
+    for (const t of ptasks) {
+      if (items.length >= 3) break;
+      items.push(t);
+    }
+    for (const t of ltasks) {
+      if (items.length >= 3) break;
+      if (!items.find(i => i._type === 'regular_task' && i.id === t.id)) items.push(t);
+    }
+
+    const itemsHTML = items.length
+      ? items.map(item => {
+          let dateHTML = '';
+          if (item.due_date) {
+            const daysLeft = Math.ceil((new Date(item.due_date + 'T00:00:00') - new Date()) / 86400000);
+            const overdue  = daysLeft < 0;
+            const urgent   = !overdue && daysLeft < 3;
+            const dateCls  = overdue ? 'di-date-overdue' : urgent ? 'di-date-urgent' : 'di-date';
+            dateHTML = `<span class="${dateCls} dash-gms-ms-date">${formatDateShort(item.due_date)}</span>`;
+          }
+          return `<div class="dash-gms-ms-row"
+            data-item-id="${item.id}" data-item-type="${item._type}" data-proj-id="${p.id}">
+            <div class="checkbox-square dash-pt-complete-btn"
+              data-item-id="${item.id}" data-item-type="${item._type}" data-proj-id="${p.id}"
+              title="Mark complete"></div>
+            <span class="dash-gms-ms-title">${escHtml(item.title)}</span>
+            ${dateHTML}
+          </div>`;
+        }).join('')
+      : `<div class="dash-gms-ms-row"><span class="dash-gms-ms-title" style="color:var(--text-muted);font-style:italic">No upcoming items</span></div>`;
+
+    return `<div class="dash-gms-block" data-proj-id="${p.id}">
+      <div class="dash-gms-header">
+        <div style="width:3px;height:14px;border-radius:2px;flex-shrink:0;background:${color}"></div>
+        <span class="dash-gms-title" style="padding-left:6px">${escHtml(p.title)}</span>
+        <div class="dash-goal-bar-wrap">
+          <div class="dash-goal-bar"><div class="dash-goal-fill" style="width:${p.progress}%;background:${color}"></div></div>
         </div>
-        <div class="dash-proj-row-right">
-          ${overdueWarn}
-          ${healthBadge}
-          <div class="dash-proj-progress">
-            <div class="dash-proj-bar"><div class="dash-proj-fill" style="width:${p.progress}%;background:${color}"></div></div>
-            <span class="dash-proj-pct">${p.progress}%</span>
-          </div>
-        </div>
-      </div>`;
+        <span class="dash-goal-pct">${p.progress}%</span>
+      </div>
+      <div class="dash-gms-ms-list">${itemsHTML}</div>
+    </div>`;
   }).join('');
 
-  el.querySelectorAll('.dash-proj-row').forEach(row => {
-    row.addEventListener('click', () => {
-      window._openProjectId = parseInt(row.dataset.id);
+  list.querySelectorAll('.dash-gms-block').forEach(block => {
+    block.addEventListener('click', e => {
+      if (e.target.closest('.dash-pt-complete-btn')) return;
+      window._openProjectId = parseInt(block.dataset.projId);
       loadPage('projects');
+    });
+  });
+
+  list.querySelectorAll('.dash-pt-complete-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      btn.classList.add('checked');
+      const projId   = btn.dataset.projId;
+      const itemId   = btn.dataset.itemId;
+      const itemType = btn.dataset.itemType;
+      const url      = itemType === 'milestone'
+        ? `/projects/${projId}/milestones/${itemId}`
+        : itemType === 'regular_task'
+          ? `/tasks/${itemId}`
+          : `/projects/${projId}/tasks/${itemId}`;
+      const body     = itemType === 'milestone' ? { status: 'completed' }
+                     : itemType === 'regular_task' ? { status: 'completed' }
+                     : { status: 'done' };
+      try {
+        await apiFetch('PATCH', url, body);
+        const row = btn.closest('.dash-gms-ms-row');
+        row.style.cssText = 'opacity:0;transition:opacity 0.18s';
+        setTimeout(() => {
+          row.remove();
+          const msBlock = list.querySelector(`.dash-gms-block[data-proj-id="${projId}"] .dash-gms-ms-list`);
+          if (msBlock && !msBlock.querySelector('.dash-gms-ms-row')) {
+            msBlock.innerHTML = `<div class="dash-gms-ms-row"><span class="dash-gms-ms-title" style="color:var(--text-muted);font-style:italic">All items complete</span></div>`;
+          }
+        }, 200);
+      } catch(err) { btn.classList.remove('checked'); }
     });
   });
 }
@@ -1019,9 +1094,9 @@ function _renderMiniCalendar(data) {
   const body = document.getElementById('dash-minical-body');
   if (!body) return;
 
-  const HOURS_START = 8;
-  const HOURS_END   = 22;
-  const HOUR_H      = 18;
+  const HOURS_START = 7;
+  const HOURS_END   = 24;
+  const HOUR_H      = 14;
   const totalH      = (HOURS_END - HOURS_START) * HOUR_H;
   const today       = todayISO();
   const DAY_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -1058,8 +1133,12 @@ function _renderMiniCalendar(data) {
   // Gutter time labels
   const gutterCells = [];
   for (let h = HOURS_START; h <= HOURS_END; h += 2) {
-    const lbl = h < 12 ? `${h}a` : h === 12 ? '12p' : `${h-12}p`;
+    const lbl = (h === 0 || h === 24) ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h-12}p`;
     gutterCells.push(`<div style="position:absolute;top:${(h-HOURS_START)*HOUR_H}px;right:3px;transform:translateY(-50%);font-size:10px;color:var(--text-muted);white-space:nowrap;font-weight:600">${lbl}</div>`);
+  }
+  // Midnight label at bottom if the range ends at 24 and wasn't hit by the even-step loop
+  if (HOURS_END === 24 && (HOURS_END - HOURS_START) % 2 !== 0) {
+    gutterCells.push(`<div style="position:absolute;top:${totalH}px;right:3px;transform:translateY(-50%);font-size:10px;color:var(--text-muted);white-space:nowrap;font-weight:600">12a</div>`);
   }
 
   const hdrRow = `<div class="dash-mc-row dash-mc-row--hdr">
@@ -1077,8 +1156,6 @@ function _renderMiniCalendar(data) {
     <div class="dash-mc-gcell dash-mc-gcell--lbl">all</div>
     ${days.map(d => {
       const pills = [
-        ...d.tasks.slice(0,3).map(t =>
-          `<span class="dash-mc-pill dash-mc-pill--task${t.priority==='high'?' high':''}" title="${escHtml(t.title)}">${escHtml(t.title.slice(0,12))}</span>`),
         ...d.milestones.slice(0,2).map(m =>
           `<span class="dash-mc-pill dash-mc-pill--ms" title="${escHtml(m.title)}">${escHtml(m.title.slice(0,12))}</span>`),
         ...d.events.filter(ev=>ev.all_day||!ev.start_time).map(ev =>

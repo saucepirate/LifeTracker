@@ -8,6 +8,7 @@ class TaskCreate(BaseModel):
     priority: str = 'medium'
     due_date: Optional[str] = None
     goal_id: Optional[int] = None
+    trip_id: Optional[int] = None
     note_id: Optional[int] = None
     tag_ids: List[int] = []
     make_recurring: bool = False

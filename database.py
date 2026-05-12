@@ -231,6 +231,15 @@ def init_db():
             sort_order INTEGER NOT NULL DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS packing_lists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            list_type TEXT NOT NULL DEFAULT 'personal',
+            for_attendee_id INTEGER REFERENCES trip_attendees(id) ON DELETE SET NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS packing_categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
@@ -470,6 +479,64 @@ def init_db():
     # Migration: trip_id on projects
     try:
         conn.execute("ALTER TABLE projects ADD COLUMN trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL")
+    except Exception:
+        pass
+    # Migration: trip_id on tasks
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL")
+    except Exception:
+        pass
+    # Migration: list_id on packing_categories
+    try:
+        conn.execute("ALTER TABLE packing_categories ADD COLUMN list_id INTEGER REFERENCES packing_lists(id) ON DELETE CASCADE")
+    except Exception:
+        pass
+    # Migration: owner_type on packing_items
+    try:
+        conn.execute("ALTER TABLE packing_items ADD COLUMN owner_type TEXT NOT NULL DEFAULT 'all_travelers'")
+    except Exception:
+        pass
+    # Migration: owner_type on template_items
+    try:
+        conn.execute("ALTER TABLE template_items ADD COLUMN owner_type TEXT NOT NULL DEFAULT 'all_travelers'")
+    except Exception:
+        pass
+    # Migration: icon and filter fields on packing_templates
+    try:
+        conn.execute("ALTER TABLE packing_templates ADD COLUMN icon TEXT NOT NULL DEFAULT '📋'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE packing_templates ADD COLUMN filter_trip_type TEXT NOT NULL DEFAULT 'any'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE packing_templates ADD COLUMN filter_destination TEXT NOT NULL DEFAULT 'any'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE packing_templates ADD COLUMN filter_length TEXT NOT NULL DEFAULT 'any'")
+    except Exception:
+        pass
+    # Migration: source lineage and filter metadata on templates
+    try:
+        conn.execute("ALTER TABLE packing_templates ADD COLUMN source_id TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE project_templates ADD COLUMN source_id TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE project_templates ADD COLUMN filter_trip_type TEXT NOT NULL DEFAULT 'any'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE project_templates ADD COLUMN filter_destination TEXT NOT NULL DEFAULT 'any'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE project_templates ADD COLUMN filter_length TEXT NOT NULL DEFAULT 'any'")
     except Exception:
         pass
 
@@ -808,6 +875,25 @@ def init_db():
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS project_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            icon TEXT NOT NULL DEFAULT '📋',
+            description TEXT,
+            color TEXT NOT NULL DEFAULT 'cyan',
+            is_ongoing INTEGER NOT NULL DEFAULT 0,
+            milestones TEXT NOT NULL DEFAULT '[]',
+            tasks TEXT NOT NULL DEFAULT '[]',
+            note_title TEXT,
+            note_content TEXT,
+            source_id TEXT,
+            filter_trip_type TEXT NOT NULL DEFAULT 'any',
+            filter_destination TEXT NOT NULL DEFAULT 'any',
+            filter_length TEXT NOT NULL DEFAULT 'any',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
 

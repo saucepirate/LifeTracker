@@ -86,3 +86,35 @@ class TaskUpdate(BaseModel):
     milestone_id: Optional[int] = None
     clear_milestone_id: bool = False
     sort_order: Optional[int] = None
+
+
+class ProjectTemplateCreate(BaseModel):
+    name: str
+    icon: str = '📋'
+    description: Optional[str] = None
+    color: str = 'cyan'
+    is_ongoing: bool = False
+    milestones: str = '[]'
+    tasks: str = '[]'
+    note_title: Optional[str] = None
+    note_content: Optional[str] = None
+    source_id: Optional[str] = None
+    filter_trip_type: str = 'any'
+    filter_destination: str = 'any'
+    filter_length: str = 'any'
+
+
+class ProjectTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    icon: Optional[str] = None
+    description: Optional[str] = None
+    color: Optional[str] = None
+    is_ongoing: Optional[bool] = None
+    milestones: Optional[str] = None
+    tasks: Optional[str] = None
+    note_title: Optional[str] = None
+    note_content: Optional[str] = None
+    source_id: Optional[str] = None
+    filter_trip_type: Optional[str] = None
+    filter_destination: Optional[str] = None
+    filter_length: Optional[str] = None
