@@ -78,6 +78,7 @@ def init_db():
             is_recurring INTEGER NOT NULL DEFAULT 0,
             recurrence_id INTEGER REFERENCES task_recurrences(id),
             goal_id INTEGER REFERENCES goals(id),
+            trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -835,6 +836,7 @@ def init_db():
             start_date TEXT,
             deadline TEXT,
             goal_id INTEGER REFERENCES goals(id) ON DELETE SET NULL,
+            trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
             is_ongoing INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
